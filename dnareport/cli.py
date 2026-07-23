@@ -15,6 +15,7 @@ def main():
     a = sub.add_parser("analyze", help="analyze an upload -> merged report")
     a.add_argument("file")
     a.add_argument("--traits", help="optional trait table for GeneAsk")
+    a.add_argument("--reference", help="reference FASTA (enables CG/CHG/CHH context for a modBAM)")
     a.add_argument("--out", default="report.html")
 
     args = ap.parse_args()
@@ -22,7 +23,7 @@ def main():
         kind, engines = route(args.file)
         print(json.dumps({"file": args.file, "kind": kind.value, "engines": list(engines)}))
     elif args.cmd == "analyze":
-        res = analyze(args.file, trait_table=args.traits)
+        res = analyze(args.file, trait_table=args.traits, reference_fasta=args.reference)
         out = render(res, args.out) if res.findings else None
         print(json.dumps({
             "kind": res.kind.value, "engines": list(res.engines),

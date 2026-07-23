@@ -48,8 +48,41 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     return findings, []
 
 
-def analyze(path: str, *, trait_table: str | None = None) -> ReportResult:
-    """Detect, route, run engine(s), collect merged findings."""
+def _run_modbam_methylation(path: str, *, reference_fasta: str | None = None):
+    """Extract the methylation stream from an ONT modBAM via bio-core and
+    summarize per-context weighted methylation as Findings (AGING/CLINICAL are
+    for interpreted markers; a whole-genome context summary is a TRAIT-level
+    descriptive finding). Returns a list of bio-core Findings."""
+    from biocore.io.modbam import pileup_methyl
+    from biocore.methylation.model import weighted_methylation, Context
+    from biocore.providers.base import Finding, Tier, Category
+
+    sites = list(pileup_methyl(path, min_prob=0.5, min_coverage=5,
+                               reference_fasta=reference_fasta))
+    by_ctx = {}
+    for s in sites:
+        by_ctx.setdefault(s.context, []).append(s)
+    findings = []
+    for ctx in (Context.CG, Context.CHG, Context.CHH):
+        cs = by_ctx.get(ctx, [])
+        if not cs:
+            continue
+        wm = weighted_methylation(cs, min_coverage=5) * 100
+        findings.append(Finding(
+            marker=f"modBAM:{ctx.value}", source="biocore.modbam",
+            description=f"Genome-wide {ctx.value} weighted methylation: {wm:.1f}% "
+                        f"over {len(cs)} covered cytosines (ONT MM/ML pileup, cov>=5)",
+            tier=Tier.MODERATE, categories=[Category.TRAIT]))
+    return findings
+
+
+def analyze(path: str, *, trait_table: str | None = None,
+            reference_fasta: str | None = None) -> ReportResult:
+    """Detect, route, run engine(s), collect merged findings.
+
+    reference_fasta: optional; enables CG/CHG/CHH context resolution for a modBAM
+    (required to report non-CpG contexts).
+    """
     kind = detect(path)
     engines = ROUTING[kind]
     result = ReportResult(kind=kind, engines=engines)
@@ -58,11 +91,18 @@ def analyze(path: str, *, trait_table: str | None = None) -> ReportResult:
         result.notes.append(f"Could not determine file type for {path}; no engine routed.")
         return result
 
-    # modBAM: bio-core splits into methylation + variant streams first
+    # modBAM: bio-core splits into methylation + variant streams.
     if kind == InputKind.MODBAM:
-        result.notes.append("ONT modBAM: bio-core splits into methylation + variant streams; "
-                            "both engines run on the respective stream.")
-        # (stream extraction wired once bio-core's modBAM reader lands; interface reserved here)
+        try:
+            f = _run_modbam_methylation(path, reference_fasta=reference_fasta)
+            result.findings += f
+            result.notes.append("ONT modBAM: methylation stream extracted via bio-core "
+                                "(MM/ML pileup). Variant stream requires a variant caller "
+                                "on the same BAM (bcftools/DeepVariant) before GeneAsk can "
+                                "interpret it — not run here.")
+        except ImportError as e:
+            result.notes.append(f"bio-core modBAM reader unavailable ({e}); needs pysam.")
+        return result
 
     if "methylask" in engines:
         try:
