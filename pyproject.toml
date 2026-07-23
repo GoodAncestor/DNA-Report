@@ -1,0 +1,16 @@
+[project]
+name = "dna-report"
+version = "0.1.0"
+description = "Unified front door: one upload -> methylation + variant analysis in one evidence-tiered report"
+requires-python = ">=3.10"
+dependencies = ["biocore", "methylask", "geneask"]
+
+[project.scripts]
+dna-report = "dnareport.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["dnareport*"]
