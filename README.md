@@ -52,6 +52,7 @@ to the private repos (SSH key or a token in the git credential helper).
     dna-report detect sample.vcf
     dna-report analyze sample_beta.csv --out report.html
     dna-report analyze genome.vcf.gz --traits traits.csv --out report.html
+    dna-report compare six_tests.merged.vcf --out compare.html  # reconcile several tests of one person
 
 ## Modules
 

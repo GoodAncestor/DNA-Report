@@ -76,6 +76,28 @@ def _run_modbam_methylation(path: str, *, reference_fasta: str | None = None):
     return findings
 
 
+def compare(vcf: str) -> ReportResult:
+    """Reconcile multiple tests of one person from a merged multi-sample VCF.
+
+    Each sample column is one test (e.g. several 23andMe chips + a WGS). Drives
+    GeneAsk's compare (which rests on bio-core.compare): pairwise concordance,
+    discordance typing, and a KING self-identity check (are all samples really
+    the same person?). Returns a ReportResult whose findings are the identity
+    check + cross-test concordance, renderable through the same bio-core renderer
+    as analyze().
+    """
+    result = ReportResult(kind=InputKind.VCF, engines=("geneask.compare",))
+    try:
+        from geneask.compare import compare_findings
+        result.findings += compare_findings(vcf)
+        if not result.findings:
+            result.notes.append("Comparison produced no findings — check the VCF "
+                                 "has >=2 sample columns.")
+    except ImportError as e:
+        result.notes.append(f"GeneAsk not installed: {e}")
+    return result
+
+
 def analyze(path: str, *, trait_table: str | None = None,
             reference_fasta: str | None = None) -> ReportResult:
     """Detect, route, run engine(s), collect merged findings.

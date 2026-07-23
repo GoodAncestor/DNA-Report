@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse, json
 from .detect import route
-from .orchestrate import analyze, render
+from .orchestrate import analyze, render, compare
 
 
 def main():
@@ -18,6 +18,11 @@ def main():
     a.add_argument("--reference", help="reference FASTA (enables CG/CHG/CHH context for a modBAM)")
     a.add_argument("--out", default="report.html")
 
+    c = sub.add_parser("compare", help="reconcile multiple tests of one person "
+                                       "(merged multi-sample VCF) -> concordance report")
+    c.add_argument("vcf", help="merged multi-sample VCF (one sample column per test)")
+    c.add_argument("--out", default="compare_report.html")
+
     args = ap.parse_args()
     if args.cmd == "detect":
         kind, engines = route(args.file)
@@ -28,6 +33,13 @@ def main():
         print(json.dumps({
             "kind": res.kind.value, "engines": list(res.engines),
             "n_findings": len(res.findings), "report": out, "notes": res.notes,
+        }))
+    elif args.cmd == "compare":
+        res = compare(args.vcf)
+        out = render(res, args.out) if res.findings else None
+        print(json.dumps({
+            "mode": "compare", "n_findings": len(res.findings),
+            "report": out, "notes": res.notes,
         }))
 
 
