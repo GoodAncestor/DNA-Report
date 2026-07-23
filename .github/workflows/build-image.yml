@@ -19,7 +19,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ${{ github.repository_owner }}/dna-report   # -> ghcr.io/goodancestor/dna-report
+  IMAGE: goodancestor/dna-report   # GHCR requires a lowercase path (owner GoodAncestor -> goodancestor)
 
 jobs:
   build:
