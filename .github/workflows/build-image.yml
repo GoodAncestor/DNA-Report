@@ -1,0 +1,50 @@
+# Build the DNA-Report web image and publish it to the container registry.
+#
+# Registry is a SINGLE swappable reference (the REGISTRY env below). It defaults
+# to ghcr.io as an interim — free, private, and natively authed to this org's
+# private repos. When goodancestor/infra stands up its own registry, change
+# REGISTRY (and the login step) here and the image ref in dna-report-deploy's
+# compose; nothing else moves.
+#
+# The build must pull three PRIVATE repos (biocore, methylask, geneask) as
+# git-source deps. GITHUB_TOKEN only sees this repo, so a token with read access
+# to the sibling private repos is passed as the GIT_TOKEN build-arg. Store it as
+# the repo/org secret ORG_READ_TOKEN (a fine-grained PAT or GitHub App token with
+# read:packages + repo:read on the GoodAncestor private repos).
+name: build-image
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/dna-report   # -> ghcr.io/goodancestor/dna-report
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write            # push to ghcr under this org
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # ghcr accepts the workflow token
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}
+          # private sibling repos need read auth during pip install
+          build-args: |
+            GIT_TOKEN=${{ secrets.ORG_READ_TOKEN }}
