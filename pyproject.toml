@@ -3,7 +3,13 @@ name = "dna-report"
 version = "0.1.0"
 description = "Unified front door: one upload -> methylation + variant analysis in one evidence-tiered report"
 requires-python = ">=3.10"
-dependencies = ["biocore", "methylask", "geneask"]
+dependencies = [
+    # All three are private GoodAncestor repos (not on PyPI); git-source specs so a clean
+    # install resolves from GitHub. Private-repo access uses git credentials (see README "Install").
+    "biocore @ git+https://github.com/GoodAncestor/bio-core.git",
+    "methylask @ git+https://github.com/GoodAncestor/MethylAsk.git",
+    "geneask @ git+https://github.com/GoodAncestor/GeneAsk.git",
+]
 
 [project.scripts]
 dna-report = "dnareport.cli:main"

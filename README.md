@@ -31,9 +31,24 @@ That is why this is a separate repo, not a bio-core feature: bio-core must not
 depend on the engines that depend on it. bio-core stays pure mechanism;
 DNA-Report is the product that stitches the engines together.
 
+## Install
+
+DNA-Report depends on three private `GoodAncestor` repos (bio-core, MethylAsk,
+GeneAsk), declared as git-source dependencies in `pyproject.toml`. A plain
+`pip install .` resolves all three from GitHub, so the machine needs git access
+to the private repos (SSH key or a token in the git credential helper).
+
+    # A) let pip pull all engines from GitHub (needs private-repo git access)
+    pip install .
+
+    # B) develop against local checkouts instead
+    for r in bio-core MethylAsk GeneAsk; do
+      git clone https://github.com/GoodAncestor/$r.git ../$r && pip install -e ../$r
+    done
+    pip install -e . --no-deps
+
 ## Quick start
 
-    pip install -e .          # pulls in biocore, methylask, geneask
     dna-report detect sample.vcf
     dna-report analyze sample_beta.csv --out report.html
     dna-report analyze genome.vcf.gz --traits traits.csv --out report.html
