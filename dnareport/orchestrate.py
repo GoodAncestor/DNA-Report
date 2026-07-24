@@ -68,24 +68,43 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     """
     findings = []
 
-    # ClinVar clinical screen: VCF -> carried variants (bio-core) -> panel hits
+    # ClinVar clinical screen. Two input paths:
+    #   VCF        -> bio-core carried_variants (pysam, REF/ALT already in the file)
+    #   array data -> GeneAsk parser registry -> panel-anchored carried variants
+    #                 (array files have no REF/ALT, so we anchor to the panel's own
+    #                  coordinates rather than a reference FASTA)
     try:
-        from biocore.variants.carried import carried_variants
         from geneask.interpret.clinvar_screen import screen_findings, load_panel
-        carried = carried_variants(path)
-        findings += screen_findings(carried, load_panel())
-    except ImportError as e:
+        panel = load_panel()
+        if kind == InputKind.ARRAY_GENOTYPE or kind == InputKind.TWENTYTHREE_AND_ME:
+            from geneask.parsers import parse_file
+            from geneask.parsers.to_carried import carried_from_parse
+            parsed = parse_file(path)
+            if parsed is not None:
+                carried = carried_from_parse(parsed, panel)
+                findings += screen_findings(carried, panel)
+        else:
+            from biocore.variants.carried import carried_variants
+            carried = carried_variants(path)
+            findings += screen_findings(carried, panel)
+    except ImportError:
         raise
-    except Exception as e:
-        # a malformed VCF or missing pysam shouldn't kill the whole report
-        findings = findings  # keep whatever we have
+    except Exception:
+        # a malformed file or missing pysam shouldn't kill the whole report
+        pass
 
     # trait table: fall back to GeneAsk's bundled consumer-genetics table when a
     # caller doesn't supply one, so a genome upload reports traits by default.
     try:
-        from geneask.interpret.traits import trait_findings, DEFAULT_TRAIT_TABLE
+        from geneask.interpret.traits import (trait_findings,
+            trait_findings_from_parse, DEFAULT_TRAIT_TABLE)
         table = trait_table or DEFAULT_TRAIT_TABLE
-        tf = trait_findings(path, table)
+        if kind == InputKind.ARRAY_GENOTYPE or kind == InputKind.TWENTYTHREE_AND_ME:
+            from geneask.parsers import parse_file
+            parsed = parse_file(path)
+            tf = trait_findings_from_parse(parsed, table) if parsed else []
+        else:
+            tf = trait_findings(path, table)
         for f in tf:
             if f.detail is None:
                 f.detail = {}

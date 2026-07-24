@@ -94,3 +94,14 @@ def test_api_docs_gated():
     assert client.get("/api/docs?api_key=test-key").status_code == 200
     # public schema disabled
     assert client.get("/openapi.json").status_code == 404
+
+
+def test_array_genotype_detected_and_routed():
+    import tempfile, os
+    from dnareport.detect import detect, InputKind, ROUTING
+    d = tempfile.mkdtemp(); p = os.path.join(d, "ancestry.txt")
+    open(p, "w").write("#AncestryDNA raw data download\n"
+                       "rsid\tchromosome\tposition\tallele1\tallele2\n"
+                       "rs1\t1\t100\tA\tG\n")
+    assert detect(p) == InputKind.ARRAY_GENOTYPE
+    assert ROUTING[InputKind.ARRAY_GENOTYPE] == ("geneask",)

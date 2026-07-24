@@ -18,6 +18,7 @@ from pathlib import Path
 
 class InputKind(str, Enum):
     TWENTYTHREE_AND_ME = "23andme"
+    ARRAY_GENOTYPE = "array_genotype"   # AncestryDNA/FTDNA/MyHeritage/LivingDNA/MyHappyGenes
     VCF = "vcf"
     BEDMETHYL = "bedmethyl"
     BETA_MATRIX = "beta_matrix"
@@ -29,6 +30,7 @@ class InputKind(str, Enum):
 # which engines each kind feeds
 ROUTING = {
     InputKind.TWENTYTHREE_AND_ME: ("geneask",),
+    InputKind.ARRAY_GENOTYPE: ("geneask",),
     InputKind.VCF: ("geneask",),
     InputKind.BEDMETHYL: ("methylask",),
     InputKind.BETA_MATRIX: ("methylask",),
@@ -92,6 +94,18 @@ def detect(path: str) -> InputKind:
             ccols = bl.rstrip("\n").split(",")
             if len(ccols) >= 2 and ccols[0].lower().startswith(("cg", "ch")):
                 return InputKind.BETA_MATRIX
+
+    # other consumer-genotype vendors (AncestryDNA/FTDNA/MyHeritage/LivingDNA/
+    # MyHappyGenes): delegate to GeneAsk's parser registry, which sniffs each
+    # vendor's header signature. Kept last so the methylation/VCF sniffs win first.
+    try:
+        from geneask.parsers import detect_parser
+        vp = detect_parser(str(path))
+        if vp is not None:
+            return (InputKind.TWENTYTHREE_AND_ME if vp.name == "23andme"
+                    else InputKind.ARRAY_GENOTYPE)
+    except Exception:
+        pass
 
     return InputKind.UNKNOWN
 
