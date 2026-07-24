@@ -146,6 +146,19 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     except Exception:
         pass
 
+    # AlphaGenome regulatory VEP, layered onto UNCERTAIN variant findings (the ones
+    # ClinVar can't resolve): predicts a regulatory effect from sequence for
+    # non-coding / uncertain-significance variants the catalogues miss. Key-gated,
+    # opt-in, per-report capped, disk-cached — no-op unless ALPHA_GENOME_KEY +
+    # ALPHAGENOME_ENABLED are set (the license constraint travels with the key).
+    try:
+        from geneask.annotators.alphagenome_vep import annotate_findings as _ag
+        agn = _ag(findings)
+        if agn:
+            notes.append(f"AlphaGenome: predicted regulatory effect for {agn} uncertain variants")
+    except Exception:
+        pass
+
     # gnomAD population frequency, layered onto variant findings (chrom-pos-ref-alt
     # markers): reframes a scary ClinVar hit with how common the variant actually is.
     # Per-variant + disk-cached, so it's a bounded number of lookups, no mirror.
