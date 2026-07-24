@@ -1,6 +1,9 @@
 """Front-door tests: landing page, demo routes, disclaimer, clock flagging in HTML."""
+import os
 import pytest
 pytest.importorskip("fastapi")
+# configure a JSON-API key BEFORE importing the app (API_KEY is read at import)
+os.environ["DNAREPORT_API_KEY"] = "test-key"
 from fastapi.testclient import TestClient
 import dnareport.web as web
 
@@ -56,7 +59,7 @@ def test_json_requires_key():
 
 
 def test_json_with_key_returns_schema():
-    r = client.get("/demo/blood?format=json&api_key=goodancestor")
+    r = client.get("/demo/blood?format=json&api_key=test-key")
     assert r.status_code == 200
     j = r.json()
     assert j["schema_version"] == "1.0"
@@ -77,7 +80,7 @@ def test_combined_demo_has_both_modalities():
 
 
 def test_combined_demo_json():
-    j = client.get("/demo/combined?format=json&api_key=goodancestor").json()
+    j = client.get("/demo/combined?format=json&api_key=test-key").json()
     # genome ClinVar findings carry gene + cancer topic
     genes = {f.get("gene") for f in j["findings"]}
     assert "BRCA2" in genes

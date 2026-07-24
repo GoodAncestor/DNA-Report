@@ -38,9 +38,12 @@ from .serialize import result_to_json
 RESULT_DIR = os.environ.get("DNAREPORT_RESULT_DIR", tempfile.gettempdir())
 QUEUE_URL = os.environ.get("DNAREPORT_QUEUE_URL")
 ENQUEUE_TOKEN = os.environ.get("ENQUEUE_TOKEN")
-# Simple API key for the JSON surface. Placeholder auth — a real key-management
-# / Cloudflare service-token layer goes over this later (see PRODUCTION_TODO).
-API_KEY = os.environ.get("DNAREPORT_API_KEY", "goodancestor")
+# API key for the JSON surface. Must be set explicitly via the DNAREPORT_API_KEY
+# env var — there is deliberately NO default, so a public clone ships no working
+# key and the JSON API stays closed until an operator sets one. Interactive HTML
+# needs no key. A real key-management / Cloudflare service-token layer goes over
+# this later (see PRODUCTION_TODO).
+API_KEY = os.environ.get("DNAREPORT_API_KEY")
 _DEMO_DIR = Path(__file__).parent / "demo_data"
 _DEMOS = {
     "blood":  ("demo_blood_wholeblood.csv", "blood",
@@ -114,7 +117,13 @@ def _render_full(result, out_path: str) -> str:
 
 
 def _check_api_key(x_api_key: str, key_q: str):
-    """Guard the JSON surface with the simple placeholder key."""
+    """Guard the JSON surface. Fail closed: if no key is configured on the server
+    the JSON API is disabled entirely (503), never open. Otherwise the caller's
+    key must match."""
+    if not API_KEY:
+        raise HTTPException(status_code=503,
+                            detail="JSON API is not enabled on this instance "
+                                   "(no DNAREPORT_API_KEY configured).")
     if (x_api_key or key_q) != API_KEY:
         raise HTTPException(status_code=401,
                             detail="JSON output requires a valid API key "

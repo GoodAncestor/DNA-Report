@@ -81,9 +81,9 @@ LANDING_HTML = """<!doctype html>
  <div class="demos">
    <h2>No file? Try a real sample</h2>
    <div class="row">
-     <a class="btn" href="/demo/blood">Whole-blood example (adult)</a>
-     <a class="btn" href="/demo/buccal">Buccal example (pediatric research sample)</a>
-     <a class="btn" href="/demo/combined">Combined methylome + genome example</a>
+     <a class="btn demo-link" href="/demo/blood">Whole-blood example (adult)</a>
+     <a class="btn demo-link" href="/demo/buccal">Buccal example (pediatric research sample)</a>
+     <a class="btn demo-link" href="/demo/combined">Combined methylome + genome example</a>
    </div>
    <p class="hint">Both are real public methylation profiles. The buccal one is a
      children's research sample &mdash; it shows how the report flags clocks that are not
@@ -95,7 +95,23 @@ LANDING_HTML = """<!doctype html>
    processed on the server and shared with no one. Every report ends with the full
    note on how to read it.</footer>
 </main>
+<div id="overlay" style="display:none;position:fixed;inset:0;background:rgba(251,251,250,.92);
+  z-index:50;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+  <div class="spinner" style="width:38px;height:38px;border:4px solid #d8d8d4;
+    border-top-color:#2b6a5b;border-radius:50%;animation:spin 0.9s linear infinite"></div>
+  <div id="overlay-msg" style="font-size:15px;color:#444">Generating your report&hellip;</div>
+  <div style="font-size:12.5px;color:#888">Matching your markers against published research &mdash; this can take a few seconds.</div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}
+@media(prefers-color-scheme:dark){#overlay{background:rgba(20,20,20,.92)}#overlay-msg{color:#ddd}}</style>
 <script>
+ // show a loading overlay when a demo link is clicked (server render takes several
+ // seconds while it matches markers live, so give immediate feedback)
+ document.querySelectorAll('.demo-link').forEach(function(a){
+   a.addEventListener('click',function(){
+     document.getElementById('overlay').style.display='flex';
+   });
+ });
  const drop=document.getElementById('drop'),fileIn=document.getElementById('file'),
    go=document.getElementById('go'),statusEl=document.getElementById('status'),
    tissue=document.getElementById('tissue');
