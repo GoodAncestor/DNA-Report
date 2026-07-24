@@ -173,6 +173,21 @@ def _wants_json(accept: str, fmt: str) -> bool:
     return fmt == "json" or "application/json" in (accept or "")
 
 
+# Demos are deterministic (fixed bundled inputs), so their rendered HTML is cached
+# in-process after the first build — subsequent clicks are instant instead of
+# re-running the ~10-13s live-annotation render. JSON requests bypass the cache
+# (they're keyed differently and rarely hit). Cleared on process restart.
+_DEMO_HTML_CACHE: dict[str, str] = {}
+
+
+def _cached_demo_html(key: str, build) -> str:
+    html = _DEMO_HTML_CACHE.get(key)
+    if html is None:
+        html = build()
+        _DEMO_HTML_CACHE[key] = html
+    return html
+
+
 @app.get("/", response_class=HTMLResponse)
 def landing():
     return HTMLResponse(LANDING_HTML)
@@ -202,17 +217,23 @@ def demo_combined(format: str = "", accept: str = Header(default=""),
     genome = str(_DEMO_DIR / "demo_genome.vcf")
     if not (os.path.exists(blood) and os.path.exists(genome)):
         raise HTTPException(status_code=500, detail="combined demo data not bundled")
-    m = analyze(blood, tissue="blood")          # methylome findings + clocks
-    g = analyze(genome)                          # genome (ClinVar) findings
-    m.findings += g.findings
-    m.engines = tuple(dict.fromkeys(list(m.engines) + list(g.engines)))
-    m.notes += g.notes
+
+    def _build():
+        m = analyze(blood, tissue="blood")      # methylome findings + clocks
+        g = analyze(genome)                      # genome (ClinVar) findings
+        m.findings += g.findings
+        m.engines = tuple(dict.fromkeys(list(m.engines) + list(g.engines)))
+        m.notes += g.notes
+        return m
+
     if _wants_json(accept, format):
         _check_api_key(x_api_key, key_q=api_key)
-        return JSONResponse(result_to_json(m, marker_url=_marker_url))
-    out = os.path.join(RESULT_DIR, f"{uuid.uuid4().hex}.html")
-    _render_full(m, out)
-    return HTMLResponse(Path(out).read_text())
+        return JSONResponse(result_to_json(_build(), marker_url=_marker_url))
+    def _render():
+        out = os.path.join(RESULT_DIR, f"{uuid.uuid4().hex}.html")
+        _render_full(_build(), out)
+        return Path(out).read_text()
+    return HTMLResponse(_cached_demo_html("combined", _render))
 
 
 @app.get("/demo/{kind}")
@@ -225,9 +246,16 @@ def demo(kind: str, format: str = "", accept: str = Header(default=""),
     path = str(_DEMO_DIR / fname)
     if not os.path.exists(path):
         raise HTTPException(status_code=500, detail="demo data not bundled")
-    return _run_and_respond(path, tissue, filename=fname,
-                            want_json=_wants_json(accept, format),
-                            x_api_key=x_api_key, key_q=api_key)
+    want_json = _wants_json(accept, format)
+    if want_json:
+        return _run_and_respond(path, tissue, filename=fname, want_json=True,
+                                x_api_key=x_api_key, key_q=api_key)
+    # cache the deterministic demo HTML so repeat clicks are instant
+    def _render():
+        resp = _run_and_respond(path, tissue, filename=fname, want_json=False)
+        return resp.body.decode("utf-8") if hasattr(resp, "body") else Path(
+            resp).read_text()
+    return HTMLResponse(_cached_demo_html(f"kind:{kind}", _render))
 
 
 @app.get("/health")
