@@ -40,6 +40,26 @@ from .serialize import result_to_json
 RESULT_DIR = os.environ.get("DNAREPORT_RESULT_DIR", tempfile.gettempdir())
 QUEUE_URL = os.environ.get("DNAREPORT_QUEUE_URL")
 ENQUEUE_TOKEN = os.environ.get("ENQUEUE_TOKEN")
+# R2 results bucket: worker-produced reports land here (a worker runs on a
+# different machine than the app, so R2 is the shared substrate). The app reads
+# from it to serve /result. Only the trusted app holds these read creds — worker
+# NODES need only write access. No-op fallback to local disk when R2 is unset
+# (the inline /analyze path writes to RESULT_DIR on the same box).
+R2_RESULTS_BUCKET = os.environ.get("R2_RESULTS_BUCKET", "dna-report-results")
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT")
+
+def _r2_result_html(job_id: str) -> str | None:
+    """Fetch a worker-produced report from the R2 results bucket, or None if it
+    isn't there yet / R2 isn't configured."""
+    if not R2_ENDPOINT:
+        return None
+    try:
+        import boto3
+        s3 = boto3.client("s3", endpoint_url=R2_ENDPOINT)   # creds from env
+        obj = s3.get_object(Bucket=R2_RESULTS_BUCKET, Key=f"{job_id}.html")
+        return obj["Body"].read().decode("utf-8", "replace")
+    except Exception:
+        return None
 # API key for the JSON surface. Must be set explicitly via the DNAREPORT_API_KEY
 # env var — there is deliberately NO default, so a public clone ships no working
 # key and the JSON API stays closed until an operator sets one. Interactive HTML
@@ -360,6 +380,11 @@ def result(job_id: str):
     # job_id is a hex uuid — reject anything else so this can't read arbitrary files
     if not re.fullmatch(r"[0-9a-f]{32}", job_id or ""):
         raise HTTPException(status_code=404, detail="unknown job")
+    # worker-produced report in R2 (a worker runs off-box); then the local inline
+    # path's disk; else it's still being worked -> friendly 202 page.
+    r2_html = _r2_result_html(job_id)
+    if r2_html is not None:
+        return HTMLResponse(r2_html)
     out = os.path.join(RESULT_DIR, f"{job_id}.html")
     if os.path.exists(out):
         return HTMLResponse(Path(out).read_text())
