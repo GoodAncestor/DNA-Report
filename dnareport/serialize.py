@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GoodAncestor
 """Serialize a ReportResult to stable JSON — the agent/product-facing view.
 
 Same structured object the HTML renderer consumes, emitted as JSON so agents and

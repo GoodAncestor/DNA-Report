@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GoodAncestor
 """DNA-Report: one upload, all relevant analysis.
 
 The product front door above the analysis engines. Detects an uploaded file's

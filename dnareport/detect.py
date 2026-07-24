@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GoodAncestor
 """File-type detection — decide which engine(s) a user upload routes to.
 
 The router is the whole point of DNA-Report: one upload, correct analysis. It

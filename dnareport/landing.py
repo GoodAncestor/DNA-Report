@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GoodAncestor
 """The landing page HTML for the DNA-Report front door.
 
 Deliberately restrained: a moderately-technical lay reader should understand it,

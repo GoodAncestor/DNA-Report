@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GoodAncestor
 """DNA-Report web front door — the HTTP layer reviewers actually hit.
 
 The CLI (dnareport.cli) is for local/operator use; this is the service Cloudflare

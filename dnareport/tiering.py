@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GoodAncestor
 """Job tiering — decide which uploads run inline vs get queued to a worker.
 
 The boundary the deployment hinges on. Reviewers hit a light front door

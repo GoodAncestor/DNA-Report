@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GoodAncestor
 """Infer a sample's tissue, so the clock engine can flag tissue mismatch.
 
 The clocks need to know the sample tissue to decide whether a blood-trained
