@@ -81,9 +81,9 @@ LANDING_HTML = """<!doctype html>
  <div class="demos">
    <h2>No file? Try a real sample</h2>
    <div class="row">
-     <a class="btn demo-link" href="/demo/blood">Whole-blood example (adult)</a>
-     <a class="btn demo-link" href="/demo/buccal">Buccal example (pediatric research sample)</a>
-     <a class="btn demo-link" href="/demo/combined">Combined methylome + genome example</a>
+     <a class="btn demo-link" href="/demo/blood">Whole-blood methylome (adult)</a>
+     <a class="btn demo-link" href="/demo/buccal">Buccal methylome (pediatric research sample)</a>
+     <a class="btn demo-link" href="/demo/combined">Methylome + genome (combined)</a>
    </div>
    <p class="hint">Both are real public methylation profiles. The buccal one is a
      children's research sample &mdash; it shows how the report flags clocks that are not
