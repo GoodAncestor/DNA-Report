@@ -55,7 +55,29 @@ _DEMOS = {
                "are marked not-valid rather than shown as misleading numbers."),
 }
 
-app = FastAPI(title="DNA-Report", docs_url=None, redoc_url=None)
+# OpenAPI schema is generated, but /docs and /openapi.json are served behind the
+# API key (see the gated routes below) rather than public — the JSON API is
+# key-guarded, so its documentation is too.
+app = FastAPI(title="DNA-Report", docs_url=None, redoc_url=None, openapi_url=None)
+
+# ---- lightweight per-key rate limiter (in-memory token bucket) --------------
+# The app is a single instance behind the tunnel, so an in-process limiter is
+# sufficient; a Redis-backed limiter is the productization step (PRODUCTION_TODO).
+import time as _time
+_RATE_MAX = int(os.environ.get("DNAREPORT_RATE_MAX", "60"))        # tokens
+_RATE_WINDOW = float(os.environ.get("DNAREPORT_RATE_WINDOW", "60"))  # seconds
+_rate_state: dict[str, list] = {}   # key -> [tokens, last_refill_ts]
+
+
+def _rate_limit(key: str):
+    """Token-bucket: DNAREPORT_RATE_MAX requests per DNAREPORT_RATE_WINDOW per key.
+    Raises 429 when exhausted."""
+    now = _time.time()
+    tokens, last = _rate_state.get(key, [_RATE_MAX, now])
+    tokens = min(_RATE_MAX, tokens + (now - last) * (_RATE_MAX / _RATE_WINDOW))
+    if tokens < 1:
+        raise HTTPException(status_code=429, detail="rate limit exceeded; slow down")
+    _rate_state[key] = [tokens - 1, now]
 
 
 def _queue():
@@ -124,10 +146,12 @@ def _check_api_key(x_api_key: str, key_q: str):
         raise HTTPException(status_code=503,
                             detail="JSON API is not enabled on this instance "
                                    "(no DNAREPORT_API_KEY configured).")
-    if (x_api_key or key_q) != API_KEY:
+    key = (x_api_key or key_q)
+    if key != API_KEY:
         raise HTTPException(status_code=401,
                             detail="JSON output requires a valid API key "
                                    "(header X-API-Key or ?api_key=).")
+    _rate_limit(key)   # per-key token bucket
 
 
 def _run_and_respond(local, tissue, filename="", *, want_json=False,
@@ -261,6 +285,30 @@ def demo(kind: str, format: str = "", accept: str = Header(default=""),
 @app.get("/health")
 def health():
     return {"status": "ok", "queue": queue_enabled()}
+
+
+@app.get("/api/openapi.json")
+def api_openapi(x_api_key: str = Header(default=""), api_key: str = ""):
+    """OpenAPI schema for the JSON API — key-gated (the API itself is key-gated,
+    so its docs are too). Rate-limited like any JSON request."""
+    _check_api_key(x_api_key, api_key)
+    from fastapi.openapi.utils import get_openapi
+    return JSONResponse(get_openapi(title="DNA-Report API", version="1.0",
+                                    description="Content-negotiated JSON API. Send "
+                                    "Accept: application/json or ?format=json with a "
+                                    "valid X-API-Key (or ?api_key=) to /analyze, "
+                                    "/demo/{kind}, /demo/combined.",
+                                    routes=app.routes))
+
+
+@app.get("/api/docs", response_class=HTMLResponse)
+def api_docs(x_api_key: str = Header(default=""), api_key: str = ""):
+    """Swagger UI for the JSON API, pointed at the key-gated schema. The key is
+    supplied via the ?api_key= query param so the UI can fetch the schema."""
+    _check_api_key(x_api_key, api_key)
+    from fastapi.openapi.docs import get_swagger_ui_html
+    return get_swagger_ui_html(openapi_url=f"/api/openapi.json?api_key={api_key or x_api_key}",
+                               title="DNA-Report API docs")
 
 
 @app.post("/analyze")

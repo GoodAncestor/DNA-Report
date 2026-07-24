@@ -86,3 +86,11 @@ def test_combined_demo_json():
     assert "BRCA2" in genes
     cancer = [f for f in j["findings"] if f.get("topic") == "cancer"]
     assert any(f.get("gene") in ("BRCA2", "MSH2") for f in cancer)
+
+
+def test_api_docs_gated():
+    assert client.get("/api/openapi.json").status_code == 401
+    assert client.get("/api/openapi.json?api_key=test-key").status_code == 200
+    assert client.get("/api/docs?api_key=test-key").status_code == 200
+    # public schema disabled
+    assert client.get("/openapi.json").status_code == 404
