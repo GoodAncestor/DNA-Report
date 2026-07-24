@@ -126,6 +126,26 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     except Exception:
         pass
 
+    # GWAS Catalog SNP-trait annotations, mirror-first: only fires when the
+    # GWAS mirror volume has been built (refresh:gwas on a worker). For array
+    # uploads we have the carried rsIDs + alleles directly; a bare mirror-miss
+    # returns nothing, so this is a no-op until the mirror exists.
+    try:
+        if is_array and parsed is not None:
+            from geneask.annotators.gwas_catalog import findings_for
+            seen = 0
+            for r in parsed.records:
+                if r.is_nocall or not r.rsid.startswith("rs"):
+                    continue
+                carried = {a for a in (r.allele1, r.allele2) if a}
+                gfs = findings_for(r.rsid, carried_alleles=carried)
+                findings += gfs
+                seen += 1 if gfs else 0
+            if seen:
+                notes.append(f"GWAS Catalog: annotated {seen} variants from the local mirror")
+    except Exception:
+        pass
+
     # tag provenance so the renderer's modality bubble/filter light up
     for f in findings:
         if f.detail is None:
