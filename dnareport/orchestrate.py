@@ -80,13 +80,20 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
         # a malformed VCF or missing pysam shouldn't kill the whole report
         findings = findings  # keep whatever we have
 
-    # trait table (optional)
-    if trait_table:
-        try:
-            from geneask.interpret.traits import trait_findings
-            findings += trait_findings(path, trait_table)
-        except Exception:
-            pass
+    # trait table: fall back to GeneAsk's bundled consumer-genetics table when a
+    # caller doesn't supply one, so a genome upload reports traits by default.
+    try:
+        from geneask.interpret.traits import trait_findings, DEFAULT_TRAIT_TABLE
+        table = trait_table or DEFAULT_TRAIT_TABLE
+        tf = trait_findings(path, table)
+        for f in tf:
+            if f.detail is None:
+                f.detail = {}
+            # traits are behavioural/physiological, not clinical -> topic 'trait'
+            f.detail.setdefault("topic", "other")
+        findings += tf
+    except Exception:
+        pass
 
     # tag provenance so the renderer's modality bubble/filter light up
     for f in findings:
