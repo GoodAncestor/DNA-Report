@@ -24,7 +24,7 @@ queue backend the /enqueue path is disabled and only inline analysis runs, so th
 app degrades to a standalone analyzer.
 """
 from __future__ import annotations
-import os, json, uuid, tempfile, html as _html
+import os, re, json, uuid, tempfile, html as _html
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form
@@ -339,14 +339,45 @@ def enqueue(payload: dict, authorization: str = Header(default="")):
     job_id = uuid.uuid4().hex
     job = {"job_id": job_id, "r2_key": payload["r2_key"], "kind": payload["kind"],
            "n_samples": payload.get("n_samples", 1)}
+    # Optional, UNBUNDLED consent (see the upload form): a user may give an email
+    # ONLY to be notified their report is ready, and SEPARATELY opt in to the
+    # newsletter. The two are independent — an email for delivery is never added
+    # to a mailing list unless `newsletter` is also true. Both default off.
+    email = (payload.get("notify_email") or "").strip()
+    if email and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        job["notify_email"] = email
+        job["newsletter"] = bool(payload.get("newsletter"))
     q.rpush("dnareport:jobs", json.dumps(job))
     return {"job_id": job_id, "status": "queued"}
 
 
 @app.get("/result/{job_id}")
 def result(job_id: str):
-    """Serve a finished report; 202 while the worker is still running it."""
+    """Serve a finished report by its claim link. While the worker is still
+    running the job, return a friendly self-refreshing 'processing' page (HTTP
+    202) rather than a bare error — the user can bookmark this URL and come back;
+    it becomes the report the moment the worker writes it."""
+    # job_id is a hex uuid — reject anything else so this can't read arbitrary files
+    if not re.fullmatch(r"[0-9a-f]{32}", job_id or ""):
+        raise HTTPException(status_code=404, detail="unknown job")
     out = os.path.join(RESULT_DIR, f"{job_id}.html")
     if os.path.exists(out):
         return HTMLResponse(Path(out).read_text())
-    raise HTTPException(status_code=202, detail="job still running or not found")
+    waiting = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>DNA-Report — preparing your report</title>
+<meta http-equiv="refresh" content="15">
+<style>body{{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:34em;
+margin:12vh auto;padding:0 22px;color:#1a1a1a;line-height:1.6;text-align:center}}
+@media(prefers-color-scheme:dark){{body{{background:#141414;color:#eee}}}}
+.spin{{width:34px;height:34px;border:3px solid #ccc;border-top-color:#2b6a5b;border-radius:50%;
+margin:0 auto 18px;animation:s 1s linear infinite}}@keyframes s{{to{{transform:rotate(360deg)}}}}
+.id{{font-family:ui-monospace,monospace;font-size:13px;color:#666}}</style></head><body>
+<div class="spin"></div>
+<h1>Preparing your report</h1>
+<p>Your file is being analysed. This page refreshes itself — you can also
+<strong>bookmark this link</strong> and return any time; your report will be here when it's ready.</p>
+<p class="id">Job {_html.escape(job_id)}</p>
+<p style="font-size:13px;color:#666">Large genome files can take several minutes. Your uploaded
+file is deleted after processing.</p>
+</body></html>"""
+    return HTMLResponse(waiting, status_code=202)

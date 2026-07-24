@@ -71,6 +71,19 @@ LANDING_HTML = """<!doctype html>
      which epigenetic clocks are valid &mdash; you can override it.</span>
  </div>
 
+ <div class="row optin">
+   <label for="notify_email">Email me when it's ready <span class="hint">(optional)</span></label>
+   <input id="notify_email" type="email" placeholder="you@example.com" autocomplete="email">
+   <span class="hint">Large genomes can take a few minutes. Give an email only if you want a
+     link when it's done &mdash; otherwise just bookmark the result page. We don't store your file.</span>
+ </div>
+ <div class="row optin">
+   <label class="check"><input id="newsletter" type="checkbox">
+     Also send me the occasional GoodAncestor newsletter</label>
+   <span class="hint">Separate, optional, and off by default &mdash; a delivery email is never
+     added to any list unless you tick this.</span>
+ </div>
+
  <button class="primary" id="go" disabled>Analyze</button>
  <div class="status" id="status"></div>
 
@@ -134,6 +147,12 @@ LANDING_HTML = """<!doctype html>
    go.disabled=true;statusEl.textContent='Analyzing\\u2026 this runs on the server and may take a moment.';
    const fd=new FormData();fd.append('file',chosen);
    if(tissue.value)fd.append('tissue',tissue.value);
+   // opt-ins (only used if the file is large enough to be queued; ignored for
+   // inline analysis, which returns the report immediately)
+   const em=document.getElementById('notify_email');
+   const nl=document.getElementById('newsletter');
+   if(em&&em.value)fd.append('notify_email',em.value);
+   if(nl&&nl.checked)fd.append('newsletter','1');
    try{
      const r=await fetch('/analyze',{method:'POST',body:fd});
      const ct=r.headers.get('content-type')||'';

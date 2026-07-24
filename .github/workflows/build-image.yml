@@ -50,3 +50,12 @@ jobs:
           # the image's layer history and would leak once the image is public).
           secrets: |
             git_token=${{ secrets.ORG_READ_TOKEN }}
+      # after each build, delete UNTAGGED versions (dangling layers every :sha
+      # build leaves) so the package doesn't accumulate. Built-in GITHUB_TOKEN.
+      - name: Prune untagged image versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: dna-report
+          package-type: container
+          delete-only-untagged-versions: true
+          min-versions-to-keep: 5

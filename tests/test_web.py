@@ -48,6 +48,15 @@ def test_enqueue_requires_token():
     assert r.status_code == 401
 
 
-def test_result_missing_is_202():
-    r = client.get("/result/nonexistent")
+def test_result_valid_but_unready_is_202():
+    # a well-formed (hex uuid) job id that hasn't finished -> friendly 202 page
+    import uuid
+    r = client.get(f"/result/{uuid.uuid4().hex}")
     assert r.status_code == 202
+    assert "Preparing your report" in r.text
+
+
+def test_result_malformed_id_is_404():
+    # a non-hex id can't be a real job and must not reach the filesystem
+    assert client.get("/result/nonexistent").status_code == 404
+    assert client.get("/result/..%2f..%2fetc%2fpasswd").status_code == 404
