@@ -146,6 +146,17 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     except Exception:
         pass
 
+    # gnomAD population frequency, layered onto variant findings (chrom-pos-ref-alt
+    # markers): reframes a scary ClinVar hit with how common the variant actually is.
+    # Per-variant + disk-cached, so it's a bounded number of lookups, no mirror.
+    try:
+        from geneask.annotators.gnomad_freq import annotate_findings as _gnomad
+        got = _gnomad(findings)
+        if got:
+            notes.append(f"gnomAD: added population frequency to {got} variant findings")
+    except Exception:
+        pass
+
     # tag provenance so the renderer's modality bubble/filter light up
     for f in findings:
         if f.detail is None:
