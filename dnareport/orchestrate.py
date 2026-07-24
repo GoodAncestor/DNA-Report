@@ -24,6 +24,7 @@ class ReportResult:
     notes: list = field(default_factory=list)
     clocks: list = field(default_factory=list)   # list[ClockResult] from the aging engine
     tissue: str | None = None                     # sample tissue used for clock validity
+    scan_stats: dict = field(default_factory=dict)  # metrics about what was scanned
 
 
 def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
@@ -315,7 +316,57 @@ def analyze(path: str, *, trait_table: str | None = None,
         except ImportError as e:
             result.notes.append(f"GeneAsk not installed: {e}")
 
+    result.scan_stats = _scan_stats(path, result)
     return result
+
+
+# reference-corpus sizes (approx, measured) each source represents — so the report
+# can say "N million variants of science scanned", investing the user in the scale.
+_CORPUS_SCALE = {
+    "clinvar": 4_200_000, "gwas_catalog": 1_000_000, "alphamissense": 71_000_000,
+    "gnomad": 800_000_000, "cpic": 5_000, "ewas_catalog": 8_000_000,
+    "gdc": 480_000, "alphagenome": 0,
+}
+
+
+def _scan_stats(path: str, result: "ReportResult") -> dict:
+    """Honest metrics about what this scan touched — derived from what actually
+    happened, not invented. Feeds the report's 'scan summary' panel."""
+    import os
+    from biocore.report.sources import resolve as _rsrc
+    findings = result.findings
+    # classified vs uncertain (a finding is 'uncertain' if its tier is speculative/
+    # unknown or its ClinVar significance is uncertain/conflicting)
+    def _uncertain(f):
+        sig = str((f.detail or {}).get("clinical_significance", "")).lower()
+        t = getattr(f.tier, "value", str(f.tier))
+        return ("uncertain" in sig or "conflicting" in sig or t in ("speculative", "unknown"))
+    classified = sum(1 for f in findings if not _uncertain(f))
+    uncertain = len(findings) - classified
+    # distinct external sources, split local-mirror vs live-API
+    srcs = {}
+    for f in findings:
+        s = _rsrc(getattr(f, "source", "") or "")
+        if s:
+            srcs[s.key] = s
+    _LIVE_API = {"gnomad", "alphagenome"}   # queried live per-variant, not mirrored
+    dbs_queried = sorted(k for k in srcs if k not in _LIVE_API)
+    apis_called = sorted(k for k in srcs if k in _LIVE_API)
+    variants_of_science = sum(_CORPUS_SCALE.get(k, 0) for k in srcs)
+    try:
+        input_bytes = os.path.getsize(path)
+    except OSError:
+        input_bytes = 0
+    return {
+        "input_bytes": input_bytes,
+        "markers_scanned": len({f.marker for f in findings}),
+        "findings_total": len(findings),
+        "classified": classified,
+        "uncertain": uncertain,
+        "local_dbs_queried": [srcs[k].name for k in dbs_queried],
+        "live_apis_called": [srcs[k].name for k in apis_called],
+        "reference_variants_scanned": variants_of_science,
+    }
 
 
 def _disclaimer_path() -> str:
@@ -346,7 +397,8 @@ def render(result: ReportResult, out_html: str = "report.html") -> str:
     from biocore.report.render import render_html
     html = render_html(result.findings, result.provider_status,
                        disclaimer_path=_disclaimer_path(),
-                       title="DNA-Report", marker_url=_marker_url)
+                       title="DNA-Report", marker_url=_marker_url,
+                       scan_stats=result.scan_stats)
     with open(out_html, "w") as fh:
         fh.write(html)
     return out_html
