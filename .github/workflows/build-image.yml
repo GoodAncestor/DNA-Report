@@ -45,6 +45,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}
-          # private sibling repos need read auth during pip install
-          build-args: |
-            GIT_TOKEN=${{ secrets.ORG_READ_TOKEN }}
+          # private sibling repos need read auth during pip install — passed as a
+          # BuildKit SECRET (never a build-arg: a build-arg's value is recorded in
+          # the image's layer history and would leak once the image is public).
+          secrets: |
+            git_token=${{ secrets.ORG_READ_TOKEN }}
