@@ -112,6 +112,12 @@ LANDING_HTML = """<!doctype html>
      document.getElementById('overlay').style.display='flex';
    });
  });
+ // ALWAYS clear the overlay when the page is shown — including back/forward
+ // (bfcache) restores, which replay the page with the overlay still visible and
+ // would otherwise leave it stuck forever with no reload to reset it.
+ window.addEventListener('pageshow',function(){
+   var o=document.getElementById('overlay'); if(o)o.style.display='none';
+ });
  const drop=document.getElementById('drop'),fileIn=document.getElementById('file'),
    go=document.getElementById('go'),statusEl=document.getElementById('status'),
    tissue=document.getElementById('tissue');
