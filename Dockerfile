@@ -34,6 +34,7 @@ RUN --mount=type=secret,id=git_token \
       pip install --no-cache-dir ".[web]"; \
       rm -rf /tmp/gitcfg'
 
-EXPOSE 8000
-# the light front door; heavy work is enqueued to workers, so 2 workers is plenty
-CMD ["uvicorn", "dnareport.web:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+EXPOSE 80
+# the light front door; heavy work is enqueued to workers, so 2 workers is plenty.
+# Port 80 matches the Coolify/Traefik proxy's upstream target (see deploy labels).
+CMD ["uvicorn", "dnareport.web:app", "--host", "0.0.0.0", "--port", "80", "--workers", "2"]
