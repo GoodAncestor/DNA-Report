@@ -146,6 +146,42 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     except Exception:
         pass
 
+    # CPIC pharmacogenomics: for pharmacogenes the person carries variants in,
+    # surface CPIC drug-response guidance. Mirror-first (refresh:pgx). This keys on
+    # the GENE (from ClinVar-screen findings), not a called diplotype — an honest
+    # "you carry variants in CYP2C19; here is CPIC's drug guidance for this gene"
+    # rather than a phenotype claim (diplotype calling is a documented follow-on).
+    try:
+        from geneask.annotators.cpic_pgx import recommendations_for_gene
+        genes = {str((f.detail or {}).get("gene")) for f in findings
+                 if (f.detail or {}).get("gene")}
+        pgx_seen = set()
+        for g in sorted(genes):
+            recs = recommendations_for_gene(g)
+            # one guidance line per drug (dedup the phenotype-expanded rows)
+            by_drug = {}
+            for r in recs:
+                by_drug.setdefault(r.detail["drug"], r)
+            for r in by_drug.values():
+                findings.append(r)
+                pgx_seen.add(g)
+        if pgx_seen:
+            notes.append(f"CPIC: pharmacogenomic drug guidance for {len(pgx_seen)} gene(s) "
+                         f"you carry variants in")
+    except Exception:
+        pass
+
+    # AlphaMissense pathogenicity, layered onto variant findings (chrom-pos-ref-alt):
+    # a computational benign/pathogenic call for missense variants ClinVar hasn't
+    # curated. Mirror-first — no-op until refresh:alphamissense builds the mirror.
+    try:
+        from geneask.annotators.alphamissense import annotate_findings as _am
+        amn = _am(findings)
+        if amn:
+            notes.append(f"AlphaMissense: added pathogenicity to {amn} missense variants")
+    except Exception:
+        pass
+
     # AlphaGenome regulatory VEP, layered onto UNCERTAIN variant findings (the ones
     # ClinVar can't resolve): predicts a regulatory effect from sequence for
     # non-coding / uncertain-significance variants the catalogues miss. Key-gated,
