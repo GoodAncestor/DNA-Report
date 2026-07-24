@@ -24,3 +24,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["dnareport*"]
+
+[tool.setuptools.package-data]
+"dnareport" = ["demo_data/*.csv", "docs/*.md"]

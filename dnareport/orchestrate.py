@@ -20,23 +20,42 @@ class ReportResult:
     findings: list = field(default_factory=list)
     provider_status: list = field(default_factory=list)
     notes: list = field(default_factory=list)
+    clocks: list = field(default_factory=list)   # list[ClockResult] from the aging engine
+    tissue: str | None = None                     # sample tissue used for clock validity
 
 
-def _run_methylask(path: str, kind: InputKind):
-    """Call the MethylAsk engine -> (findings, provider_status). Import lazily so
-    DNA-Report can run with only one engine installed."""
+def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
+                   max_markers: int | None = 40):
+    """Call the MethylAsk engine -> (findings, provider_status, clocks). Import
+    lazily so DNA-Report can run with only one engine installed.
+
+    Runs the epigenetic clocks on the full beta profile (passing `tissue` so
+    blood-trained clocks on a non-blood sample are flagged, not trusted), and
+    annotates a capped set of markers via the providers (annotation is one live
+    lookup per marker, so it is capped to keep the request path light — heavy
+    full-array runs go through the queue tier)."""
     from biocore.providers.registry import Registry
     from methylask.providers.ewas_catalog import EwasCatalogProvider
     from methylask.providers.clinvar import ClinVarProvider
     from methylask.providers.gdc import GdcProvider
     from methylask.ingest.beta_matrix import read_beta_matrix
+    from methylask import clocks as _clocks
 
     reg = Registry()
     for p in (EwasCatalogProvider(), ClinVarProvider(), GdcProvider()):
         reg.register(p)
-    markers = read_beta_matrix(path).markers if kind == InputKind.BETA_MATRIX else []
-    rep = reg.annotate(markers) if markers else reg.annotate([])
-    return rep.all_findings(), reg.status()
+
+    clock_results = []
+    markers = []
+    if kind == InputKind.BETA_MATRIX:
+        sample = read_beta_matrix(path)
+        markers = sample.markers                      # list[str] of probe ids
+        # clocks run on the WHOLE profile (cheap arithmetic, no network)
+        clock_results = _clocks.run_all(sample.betas, tissue=tissue)
+
+    capped = markers[:max_markers] if (max_markers and markers) else markers
+    rep = reg.annotate(capped) if capped else reg.annotate([])
+    return rep.all_findings(), reg.status(), clock_results
 
 
 def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
@@ -99,15 +118,18 @@ def compare(vcf: str) -> ReportResult:
 
 
 def analyze(path: str, *, trait_table: str | None = None,
-            reference_fasta: str | None = None) -> ReportResult:
+            reference_fasta: str | None = None,
+            tissue: str | None = None) -> ReportResult:
     """Detect, route, run engine(s), collect merged findings.
 
     reference_fasta: optional; enables CG/CHG/CHH context resolution for a modBAM
     (required to report non-CpG contexts).
+    tissue: sample tissue (e.g. 'blood','saliva','buccal'); passed to the clock
+    engine so a clock trained on a different tissue is flagged, not trusted.
     """
     kind = detect(path)
     engines = ROUTING[kind]
-    result = ReportResult(kind=kind, engines=engines)
+    result = ReportResult(kind=kind, engines=engines, tissue=tissue)
 
     if kind == InputKind.UNKNOWN:
         result.notes.append(f"Could not determine file type for {path}; no engine routed.")
@@ -128,9 +150,10 @@ def analyze(path: str, *, trait_table: str | None = None,
 
     if "methylask" in engines:
         try:
-            f, st = _run_methylask(path, kind)
+            f, st, clk = _run_methylask(path, kind, tissue=tissue)
             result.findings += f
             result.provider_status += st
+            result.clocks += clk
         except ImportError as e:
             result.notes.append(f"MethylAsk not installed: {e}")
 
@@ -145,11 +168,35 @@ def analyze(path: str, *, trait_table: str | None = None,
     return result
 
 
+def _disclaimer_path() -> str:
+    """DNA-Report is the product, so it owns the user-facing disclaimer text
+    (bio-core's own DISCLAIMER.md says the product owns it). Bundled as package
+    data so it is present in the deployed container."""
+    from pathlib import Path
+    return str(Path(__file__).parent / "docs" / "DISCLAIMER.md")
+
+
+def _marker_url(marker: str) -> str | None:
+    """Map a marker id to a public record (product-level domain knowledge; kept
+    out of organism-agnostic bio-core). CpG probe -> EWAS Catalog; rsID -> dbSNP;
+    chrom:pos -> UCSC browser."""
+    m = marker.strip()
+    if m[:2] in ("cg", "ch"):
+        return f"https://www.ewascatalog.org/?query={m}"
+    if m.startswith("rs") and m[2:].isdigit():
+        return f"https://www.ncbi.nlm.nih.gov/snp/{m}"
+    if m.startswith("chr") and ":" in m:
+        return f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg38&position={m}"
+    return None
+
+
 def render(result: ReportResult, out_html: str = "report.html") -> str:
     """Render the merged findings through bio-core's renderer (one report,
-    grouped by category, sorted by evidence tier, single disclaimer)."""
+    grouped by category then marker, robust first, single disclaimer)."""
     from biocore.report.render import render_html
-    html = render_html(result.findings, result.provider_status)
+    html = render_html(result.findings, result.provider_status,
+                       disclaimer_path=_disclaimer_path(),
+                       title="DNA-Report", marker_url=_marker_url)
     with open(out_html, "w") as fh:
         fh.write(html)
     return out_html
