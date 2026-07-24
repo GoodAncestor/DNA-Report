@@ -135,7 +135,19 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
         with open(local, "r", errors="ignore") as fh:
             header = fh.readline()
         tissue = infer_tissue(filename or os.path.basename(local), header).tissue
-    res = compare(local) if kind == InputKind.VCF else analyze(local, tissue=tissue)
+
+    # VCF routing: a MULTI-sample VCF is a reconcile-my-tests job (compare);
+    # a SINGLE-sample VCF is interpretation (analyze -> ClinVar + traits).
+    if kind == InputKind.VCF:
+        n = 1
+        try:
+            from biocore.variants.carried import n_samples
+            n = n_samples(local)
+        except Exception:
+            pass
+        res = compare(local) if n >= 2 else analyze(local, tissue=tissue)
+    else:
+        res = analyze(local, tissue=tissue)
 
     if want_json:
         _check_api_key(x_api_key, key_q)
@@ -169,6 +181,29 @@ def disclaimer():
         "not provide medical advice, diagnosis, or treatment. Findings are labelled "
         "by how much scientific support they have; discuss anything health-related "
         "with a qualified clinician who has your full context.")
+
+
+@app.get("/demo/combined")
+def demo_combined(format: str = "", accept: str = Header(default=""),
+                  x_api_key: str = Header(default=""), api_key: str = ""):
+    """A profile with BOTH a methylome and a genome upload, merged into one
+    report — so the source (methylome/genome) bubble and filter are exercised.
+    Registered before /demo/{kind} so the static path wins."""
+    blood = str(_DEMO_DIR / "demo_blood_wholeblood.csv")
+    genome = str(_DEMO_DIR / "demo_genome.vcf")
+    if not (os.path.exists(blood) and os.path.exists(genome)):
+        raise HTTPException(status_code=500, detail="combined demo data not bundled")
+    m = analyze(blood, tissue="blood")          # methylome findings + clocks
+    g = analyze(genome)                          # genome (ClinVar) findings
+    m.findings += g.findings
+    m.engines = tuple(dict.fromkeys(list(m.engines) + list(g.engines)))
+    m.notes += g.notes
+    if _wants_json(accept, format):
+        _check_api_key(x_api_key, key_q=api_key)
+        return JSONResponse(result_to_json(m, marker_url=_marker_url))
+    out = os.path.join(RESULT_DIR, f"{uuid.uuid4().hex}.html")
+    _render_full(m, out)
+    return HTMLResponse(Path(out).read_text())
 
 
 @app.get("/demo/{kind}")

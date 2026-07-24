@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     # All three are private GoodAncestor repos (not on PyPI); git-source specs so a clean
     # install resolves from GitHub. Private-repo access uses git credentials (see README "Install").
-    "biocore @ git+https://github.com/GoodAncestor/bio-core.git",
+    "biocore[variants] @ git+https://github.com/GoodAncestor/bio-core.git",
     "methylask @ git+https://github.com/GoodAncestor/MethylAsk.git",
     "geneask @ git+https://github.com/GoodAncestor/GeneAsk.git",
 ]
@@ -26,4 +26,4 @@ build-backend = "setuptools.build_meta"
 include = ["dnareport*"]
 
 [tool.setuptools.package-data]
-"dnareport" = ["demo_data/*.csv", "docs/*.md"]
+"dnareport" = ["demo_data/*.csv", "demo_data/*.vcf", "docs/*.md"]

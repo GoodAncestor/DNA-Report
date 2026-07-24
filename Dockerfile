@@ -12,8 +12,10 @@
 # is therefore safe to publish publicly.
 FROM python:3.12-slim
 
-# git needed to resolve the private git-source deps at build time
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+# git: resolve private git-source deps at build time.
+# bcftools: GeneAsk's trait-table screen shells out to it (the ClinVar screen uses
+#   pysam and needs no system tool; bcftools is here for the rsid trait path).
+RUN apt-get update && apt-get install -y --no-install-recommends git bcftools \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

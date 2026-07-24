@@ -66,3 +66,20 @@ def test_json_with_key_returns_schema():
     # findings carry the enriched fields
     f = j["findings"][0]
     assert set(["marker", "tier", "topic", "links", "stats"]).issubset(f)
+
+
+def test_combined_demo_has_both_modalities():
+    r = client.get("/demo/combined")
+    assert r.status_code == 200
+    assert "mod-methylome" in r.text
+    assert "id='modfilter'" in r.text        # source filter appears when mixed
+    assert "BRCA2" in r.text                  # genome ClinVar finding present
+
+
+def test_combined_demo_json():
+    j = client.get("/demo/combined?format=json&api_key=goodancestor").json()
+    # genome ClinVar findings carry gene + cancer topic
+    genes = {f.get("gene") for f in j["findings"]}
+    assert "BRCA2" in genes
+    cancer = [f for f in j["findings"] if f.get("topic") == "cancer"]
+    assert any(f.get("gene") in ("BRCA2", "MSH2") for f in cancer)

@@ -83,6 +83,7 @@ LANDING_HTML = """<!doctype html>
    <div class="row">
      <a class="btn" href="/demo/blood">Whole-blood example (adult)</a>
      <a class="btn" href="/demo/buccal">Buccal example (pediatric research sample)</a>
+     <a class="btn" href="/demo/combined">Combined methylome + genome example</a>
    </div>
    <p class="hint">Both are real public methylation profiles. The buccal one is a
      children's research sample &mdash; it shows how the report flags clocks that are not

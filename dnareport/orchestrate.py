@@ -59,11 +59,40 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
 
 
 def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
-    """Call the GeneAsk engine -> (findings, provider_status)."""
-    from geneask.interpret.traits import trait_findings
+    """Interpret a single-sample VCF/23andMe callset -> (findings, status).
+
+    Two screens: the ClinVar clinical panel (pathogenic/likely-pathogenic hits,
+    incl. cancer-predisposition genes) always runs; the trait table runs when
+    supplied. Every finding is tagged modality='genome' so the report's source
+    bubble/filter mark it as genome-derived (vs methylome).
+    """
     findings = []
+
+    # ClinVar clinical screen: VCF -> carried variants (bio-core) -> panel hits
+    try:
+        from biocore.variants.carried import carried_variants
+        from geneask.interpret.clinvar_screen import screen_findings, load_panel
+        carried = carried_variants(path)
+        findings += screen_findings(carried, load_panel())
+    except ImportError as e:
+        raise
+    except Exception as e:
+        # a malformed VCF or missing pysam shouldn't kill the whole report
+        findings = findings  # keep whatever we have
+
+    # trait table (optional)
     if trait_table:
-        findings = trait_findings(path, trait_table)
+        try:
+            from geneask.interpret.traits import trait_findings
+            findings += trait_findings(path, trait_table)
+        except Exception:
+            pass
+
+    # tag provenance so the renderer's modality bubble/filter light up
+    for f in findings:
+        if f.detail is None:
+            f.detail = {}
+        f.detail.setdefault("modality", "genome")
     return findings, []
 
 
