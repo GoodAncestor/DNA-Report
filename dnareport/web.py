@@ -235,7 +235,11 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
     if job_tier(kind) == QUEUED:
         raise UploadError(
             "needs_large_file_upload",
-            f"{_KIND_LABEL.get(kind, kind.value)} files go through the large-file upload",
+            # the labels are already singular nouns ("Illumina IDAT array file"),
+            # so don't pluralise them into "array file files"
+            f"An {_KIND_LABEL.get(kind, kind.value)} goes through the large-file upload"
+            if _KIND_LABEL.get(kind, "").startswith(("A", "E", "I", "O", "U"))
+            else f"A {_KIND_LABEL.get(kind, kind.value)} goes through the large-file upload",
             f"A {_KIND_LABEL.get(kind, kind.value)} has to be normalised before it can "
             "be interpreted, which is too heavy for the instant path — send it "
             "through the large-file upload instead.",
