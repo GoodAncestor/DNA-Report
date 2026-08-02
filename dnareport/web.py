@@ -27,15 +27,19 @@ from __future__ import annotations
 import os, re, json, uuid, tempfile, html as _html
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
+from . import __version__
 from .detect import detect, InputKind
 from .tiering import job_tier, queue_enabled, QUEUED
 from .orchestrate import analyze, compare, render, _marker_url
 from .tissue import infer_tissue
 from .landing import LANDING_HTML
 from .serialize import result_to_json
+from . import pages
+from .uploads import (UploadError, ACCEPTED_FORMATS, stream_to_disk, unwrap_archive,
+                      sanitize_note)
 
 RESULT_DIR = os.environ.get("DNAREPORT_RESULT_DIR", tempfile.gettempdir())
 QUEUE_URL = os.environ.get("DNAREPORT_QUEUE_URL")
@@ -81,6 +85,39 @@ _DEMOS = {
 # API key (see the gated routes below) rather than public — the JSON API is
 # key-guarded, so its documentation is too.
 app = FastAPI(title="DNA-Report", docs_url=None, redoc_url=None, openapi_url=None)
+
+# Human-facing names for the detected kinds, so a refusal or an empty result can
+# say "AncestryDNA-style genotype export" instead of "array_genotype".
+_KIND_LABEL = {
+    InputKind.TWENTYTHREE_AND_ME: "23andMe raw genotype export",
+    InputKind.ARRAY_GENOTYPE: "Consumer genotype export",
+    InputKind.VCF: "VCF genome",
+    InputKind.BEDMETHYL: "bedMethyl methylation calls",
+    InputKind.BETA_MATRIX: "Methylation beta-value table",
+    InputKind.IDAT: "Illumina IDAT array file",
+    InputKind.MODBAM: "ONT modBAM",
+    InputKind.UNKNOWN: "Unrecognised",
+}
+
+
+@app.exception_handler(UploadError)
+async def _upload_error(request: Request, exc: UploadError):
+    """One place decides how a rejected upload is presented.
+
+    A browser gets the rendered refusal page; an API caller gets the structured
+    JSON body. Either way the STATUS CODE is a real 4xx — the previous behaviour
+    of answering "I could not use this" with HTTP 200 is what made a failed
+    upload look identical to nothing happening.
+    """
+    accept = request.headers.get("accept", "")
+    wants_html = "text/html" in accept and "application/json" not in accept
+    if wants_html:
+        return HTMLResponse(
+            pages.refusal_page(code=exc.code, title=exc.title, message=exc.message,
+                               hint=exc.hint, filename=getattr(exc, "filename", ""),
+                               accepted=ACCEPTED_FORMATS if exc.accepted else None),
+            status_code=exc.status)
+    return JSONResponse(exc.body(), status_code=exc.status)
 
 # ---- lightweight per-key rate limiter (in-memory token bucket) --------------
 # The app is a single instance behind the tunnel, so an in-process limiter is
@@ -181,11 +218,30 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
     """Shared path for uploads and demos: detect, gate heavy kinds, run, then
     return HTML (human) or JSON (agents/products, key-guarded)."""
     kind = detect(local)
+    # A file we cannot classify is a REFUSAL, not an empty report. It used to fall
+    # through to the analysis path, produce nothing, and return HTTP 200 with a
+    # JSON body — which the page showed as one line of grey text, so a wrong file
+    # was indistinguishable from a silent failure.
+    if kind == InputKind.UNKNOWN:
+        raise UploadError(
+            "unrecognised_format",
+            "We could not tell what kind of file this is",
+            "The upload was read successfully, but its contents do not match any "
+            "genotype or methylation format we know how to analyse.",
+            hint="If this came from a testing service, upload the original file "
+                 "exactly as downloaded — re-saving it from a spreadsheet usually "
+                 "strips the header lines the format is identified by.",
+            status=415, accepted=True)
     if job_tier(kind) == QUEUED:
-        raise HTTPException(
-            status_code=413,
-            detail=(f"{kind.value} is a heavy input; upload it via the large-file "
-                    "flow (a pre-signed R2 URL), not this endpoint."))
+        raise UploadError(
+            "needs_large_file_upload",
+            f"{_KIND_LABEL.get(kind, kind.value)} files go through the large-file upload",
+            f"A {_KIND_LABEL.get(kind, kind.value)} has to be normalised before it can "
+            "be interpreted, which is too heavy for the instant path — send it "
+            "through the large-file upload instead.",
+            hint="Use the large-file upload, which streams the file in parts and "
+                 "hands you a link you can bookmark while it runs.",
+            status=413)
     if not tissue:
         with open(local, "r", errors="ignore") as fh:
             header = fh.readline()
@@ -209,7 +265,15 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
         return JSONResponse(result_to_json(res, marker_url=_marker_url))
 
     if not res.findings and not res.clocks:
-        return JSONResponse({"kind": kind.value, "n_findings": 0, "notes": res.notes})
+        # A readable file that yielded nothing is a RESULT (200), so it is served
+        # as a real page that says what was recognised and why a valid file can
+        # come back empty — not as a bare JSON object.
+        scratch = os.path.dirname(local)
+        display = filename or os.path.basename(local)
+        notes = [n for n in (sanitize_note(n, scratch, display) for n in res.notes) if n]
+        return HTMLResponse(pages.empty_report_page(
+            kind_label=_KIND_LABEL.get(kind, kind.value),
+            filename=display, notes=notes))
     out = os.path.join(RESULT_DIR, f"{uuid.uuid4().hex}.html")
     _render_full(res, out)
     return HTMLResponse(Path(out).read_text())
@@ -306,7 +370,10 @@ def demo(kind: str, format: str = "", accept: str = Header(default=""),
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "queue": queue_enabled()}
+    """Liveness + what this instance can actually do, so an operator can tell a
+    standalone box from a queue-backed one without reading its env."""
+    return {"status": "ok", "version": __version__, "queue": queue_enabled(),
+            "json_api": bool(API_KEY), "demos": sorted(list(_DEMOS) + ["combined"])}
 
 
 @app.get("/api/openapi.json")
@@ -338,14 +405,31 @@ async def analyze_inline(file: UploadFile = File(...), tissue: str = Form(defaul
                          format: str = "", accept: str = Header(default=""),
                          x_api_key: str = Header(default=""), api_key: str = ""):
     """Small inline uploads only. Returns HTML by default, or JSON (key-guarded)
-    when the client sends Accept: application/json or ?format=json."""
+    when the client sends Accept: application/json or ?format=json.
+
+    Consumer exports arrive as ZIPs (23andMe, AncestryDNA, MyHeritage and FTDNA
+    all hand the user one), so an archive is unwrapped here and the genotype file
+    inside it is what gets analysed. The browser also unwraps before sending —
+    this is the backstop for API callers.
+    """
+    display = os.path.basename(file.filename or "upload")
     scratch = tempfile.mkdtemp(prefix="dnr-web-")
-    local = os.path.join(scratch, file.filename)
-    with open(local, "wb") as fh:
-        fh.write(await file.read())
-    return _run_and_respond(local, tissue or None, filename=file.filename,
-                            want_json=_wants_json(accept, format),
-                            x_api_key=x_api_key, key_q=api_key)
+    try:
+        # basename() so a crafted filename cannot write outside the scratch dir
+        local = os.path.join(scratch, display)
+        await stream_to_disk(file, local)
+
+        local, unwrapped = unwrap_archive(local, scratch)
+        if unwrapped:
+            display = os.path.basename(local)
+
+        return _run_and_respond(local, tissue or None, filename=display,
+                                want_json=_wants_json(accept, format),
+                                x_api_key=x_api_key, key_q=api_key)
+    except UploadError as exc:
+        # name the file the user actually chose, so the refusal page can show it
+        exc.filename = exc.filename if getattr(exc, "filename", "") else display
+        raise
 
 
 @app.post("/enqueue")
@@ -388,21 +472,4 @@ def result(job_id: str):
     out = os.path.join(RESULT_DIR, f"{job_id}.html")
     if os.path.exists(out):
         return HTMLResponse(Path(out).read_text())
-    waiting = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>DNA-Report — preparing your report</title>
-<meta http-equiv="refresh" content="15">
-<style>body{{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:34em;
-margin:12vh auto;padding:0 22px;color:#1a1a1a;line-height:1.6;text-align:center}}
-@media(prefers-color-scheme:dark){{body{{background:#141414;color:#eee}}}}
-.spin{{width:34px;height:34px;border:3px solid #ccc;border-top-color:#2b6a5b;border-radius:50%;
-margin:0 auto 18px;animation:s 1s linear infinite}}@keyframes s{{to{{transform:rotate(360deg)}}}}
-.id{{font-family:ui-monospace,monospace;font-size:13px;color:#666}}</style></head><body>
-<div class="spin"></div>
-<h1>Preparing your report</h1>
-<p>Your file is being analysed. This page refreshes itself — you can also
-<strong>bookmark this link</strong> and return any time; your report will be here when it's ready.</p>
-<p class="id">Job {_html.escape(job_id)}</p>
-<p style="font-size:13px;color:#666">Large genome files can take several minutes. Your uploaded
-file is deleted after processing.</p>
-</body></html>"""
-    return HTMLResponse(waiting, status_code=202)
+    return HTMLResponse(pages.waiting_page(job_id), status_code=202)
