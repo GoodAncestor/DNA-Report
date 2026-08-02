@@ -228,3 +228,28 @@ def test_summary_counts_only_classified_directions():
         ]
     out = result_to_json(R())
     assert out["summary"]["by_direction"] == {"adverse": 1}
+
+
+def test_sanitize_note_does_not_corrupt_urls():
+    """A blanket '//' -> '/' collapse mangled every URL an engine cited."""
+    note = "see https://www.ncbi.nlm.nih.gov/clinvar/ for details"
+    assert sanitize_note(note, "/tmp/dnr-web-abc", "g.txt") == note
+
+
+def test_sanitize_note_substitutes_the_users_filename():
+    out = sanitize_note("could not parse /tmp/dnr-web-abc123/genome.txt (line 4)",
+                        "/tmp/dnr-web-abc123", "genome.txt")
+    assert out == "could not parse genome.txt (line 4)", out
+
+
+def test_sanitize_note_leaves_legitimate_paths_alone():
+    """The old regex stripped any /tmp or /var path, including a mirror DB an
+    engine legitimately names."""
+    note = "ClinVar mirror /var/db/geneask/clinvar_full.sqlite is stale"
+    assert sanitize_note(note, "/tmp/dnr-web-abc", "g.txt") == note
+
+
+def test_sanitize_note_catches_a_foreign_scratch_dir():
+    out = sanitize_note("failed on /private/var/folders/x/dnr-web-zz9/other.txt",
+                        "/tmp/dnr-web-abc", "g.txt")
+    assert "dnr-web-" not in out and out.endswith("other.txt"), out

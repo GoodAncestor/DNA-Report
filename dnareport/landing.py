@@ -483,6 +483,11 @@ _LANDING_TEMPLATE = """<!doctype html>
      if(!best||uSize>best.uSize) best={method,cSize,uSize,lOff,name};
    }
    if(!best) throw new Error('nothing readable inside the zip');
+   // Trust the declared size only as far as a limit. Inflating an entry that
+   // claims 1 GiB materialises 1 GiB in the tab; a crafted archive would OOM the
+   // page rather than fall back, which defeats the "never break the page" intent
+   // below. The server-side unwrapper applies the same cap before extracting.
+   if(best.uSize>MAX_UNZIP) throw new Error('archive contents too large to unpack here');
 
    // local header tells us where this member's bytes actually start
    const lh=await readLE(file,best.lOff,30);
@@ -518,6 +523,7 @@ _LANDING_TEMPLATE = """<!doctype html>
  // multipart upload, takes the parts at the edge, and enqueues a job; we then
  // hand the user a claim link they can bookmark. Until now the app refused
  // heavy kinds with a pointer to this flow and no way to reach it.
+ const MAX_UNZIP = 512 * 1024 * 1024;    // refuse to inflate more than this in-tab
  const R2_PART = 16 * 1024 * 1024;         // R2 wants >=5MB for all but the last
  // the Worker validates `kind` against its own allow-list, so these strings
  // must stay in step with KINDS in cloudflare/r2-upload-worker.js
@@ -638,11 +644,11 @@ _LANDING_TEMPLATE = """<!doctype html>
      if(tissue.value)fd.append('tissue',tissue.value);
      // opt-ins (only used if the file is large enough to be queued; ignored for
      // inline analysis, which returns the report immediately)
-     const em=document.getElementById('notify_email');
-     const nl=document.getElementById('newsletter');
-     if(em&&em.value)fd.append('notify_email',em.value);
-     if(nl&&nl.checked)fd.append('newsletter','1');
-     r=await fetch('/analyze',{method:'POST',body:fd,headers:{'Accept':'text/html'}});
+     // NOTE: notify_email/newsletter are deliberately NOT sent here. /analyze
+     // returns the report in this response, so there is nothing to notify about
+     // — and FastAPI would silently discard them anyway. They are forwarded only
+     // on the large-file path, which is the one that actually runs later.
+     r=await fetch('/analyze',{method:'POST',body:fd,headers:{\n       // success must stay HTML (the report); errors must be JSON so the\n       // panel below can show the reason instead of a bare status code\n       'Accept':'text/html','X-Error-Format':'json'}});
    }catch(err){
      hideOverlay(); statusEl.textContent='';
      showFail({code:'network',title:'We could not reach the analyser',

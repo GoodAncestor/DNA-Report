@@ -24,7 +24,7 @@ queue backend the /enqueue path is disabled and only inline analysis runs, so th
 app degrades to a standalone analyzer.
 """
 from __future__ import annotations
-import os, re, json, uuid, tempfile, html as _html
+import os, re, json, uuid, shutil, tempfile, html as _html
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
@@ -100,6 +100,11 @@ _KIND_LABEL = {
 }
 
 
+def _article(kind) -> str:
+    """"A" or "An" for a kind label, so the title and the message body agree."""
+    return "An" if _KIND_LABEL.get(kind, "")[:1].upper() in "AEIOU" else "A"
+
+
 @app.exception_handler(UploadError)
 async def _upload_error(request: Request, exc: UploadError):
     """One place decides how a rejected upload is presented.
@@ -109,6 +114,14 @@ async def _upload_error(request: Request, exc: UploadError):
     of answering "I could not use this" with HTTP 200 is what made a failed
     upload look identical to nothing happening.
     """
+    # The page's own fetch asks for errors as JSON explicitly, because it needs
+    # the structured body to render its in-page failure panel — it cannot use
+    # this HTML page, and it must keep asking for text/html so a SUCCESSFUL
+    # response is still the rendered report rather than the key-gated JSON API.
+    # Without this signal the app served itself a refusal page it then discarded,
+    # showing "The server answered with HTTP 415" instead of the reason.
+    if request.headers.get("x-error-format", "").lower() == "json":
+        return JSONResponse(exc.body(), status_code=exc.status)
     accept = request.headers.get("accept", "")
     wants_html = "text/html" in accept and "application/json" not in accept
     if wants_html:
@@ -235,14 +248,13 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
     if job_tier(kind) == QUEUED:
         raise UploadError(
             "needs_large_file_upload",
-            # the labels are already singular nouns ("Illumina IDAT array file"),
-            # so don't pluralise them into "array file files"
-            f"An {_KIND_LABEL.get(kind, kind.value)} goes through the large-file upload"
-            if _KIND_LABEL.get(kind, "").startswith(("A", "E", "I", "O", "U"))
-            else f"A {_KIND_LABEL.get(kind, kind.value)} goes through the large-file upload",
-            f"A {_KIND_LABEL.get(kind, kind.value)} has to be normalised before it can "
-            "be interpreted, which is too heavy for the instant path — send it "
-            "through the large-file upload instead.",
+            # labels are already singular nouns ("Illumina IDAT array file"), so
+            # they take an article rather than a plural
+            f"{_article(kind)} {_KIND_LABEL.get(kind, kind.value)} goes through "
+            "the large-file upload",
+            f"{_article(kind)} {_KIND_LABEL.get(kind, kind.value)} has to be normalised "
+            "before it can be interpreted, which is too heavy for the instant path — "
+            "send it through the large-file upload instead.",
             hint="Use the large-file upload, which streams the file in parts and "
                  "hands you a link you can bookmark while it runs.",
             status=413)
@@ -280,7 +292,17 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
             filename=display, notes=notes))
     out = os.path.join(RESULT_DIR, f"{uuid.uuid4().hex}.html")
     _render_full(res, out)
-    return HTMLResponse(Path(out).read_text())
+    try:
+        return HTMLResponse(Path(out).read_text())
+    finally:
+        # The inline path returns the report in the response body, so this file
+        # is scratch, not storage. Leaving it behind grew RESULT_DIR without
+        # bound and left a rendered copy of someone's findings on disk. Queued
+        # jobs are unaffected — those are served from R2 or written by a worker.
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
 
 
 def _wants_json(accept: str, fmt: str) -> bool:
@@ -418,6 +440,12 @@ async def analyze_inline(file: UploadFile = File(...), tissue: str = Form(defaul
     """
     display = os.path.basename(file.filename or "upload")
     scratch = tempfile.mkdtemp(prefix="dnr-web-")
+    # The scratch dir holds the caller's raw genotype data and MUST NOT outlive
+    # the request. Every report and refusal page this service prints says the
+    # uploaded file is deleted after processing; without the finally below that
+    # promise was false, and the front door accumulated one directory of
+    # someone's genome per upload, forever. On the archive path both copies are
+    # in here (the original .zip and the member extracted from it).
     try:
         # basename() so a crafted filename cannot write outside the scratch dir
         local = os.path.join(scratch, display)
@@ -434,6 +462,10 @@ async def analyze_inline(file: UploadFile = File(...), tissue: str = Form(defaul
         # name the file the user actually chose, so the refusal page can show it
         exc.filename = exc.filename if getattr(exc, "filename", "") else display
         raise
+    finally:
+        # _run_and_respond has already read the rendered report into the response
+        # body, so nothing here is still needed once the request is answered.
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 @app.post("/enqueue")

@@ -33,6 +33,7 @@ callers already read it; `error` is what the UI renders.
 from __future__ import annotations
 
 import os
+import re
 import zipfile
 
 # Cap for the inline front door. Real consumer genotype exports are 15-25 MB
@@ -193,12 +194,20 @@ def sanitize_note(note: str, scratch: str, display_name: str) -> str:
     otherwise expose the front door's temp directory layout in the UI."""
     if not note:
         return note
-    out = note.replace(scratch, "").replace("//", "/")
-    # the full path and the bare basename both appear across engines
-    for token in (os.path.join(scratch, display_name), scratch):
-        if token:
-            out = out.replace(token, display_name)
-    # any remaining absolute temp path -> just its final component
-    import re
-    out = re.sub(r"(/(?:private/)?(?:tmp|var)/[^\s;,)]+/)([^\s;,)]+)", r"\2", out)
+    out = note
+    # Longest match first: the full path to the analysed file becomes the name
+    # the user actually chose, then any other reference to the scratch dir is
+    # dropped. Doing this in the other order left nothing for the filename
+    # substitution to match, so notes came out as "/genome.txt" with a stray
+    # leading slash instead of "genome.txt".
+    if scratch and display_name:
+        out = out.replace(os.path.join(scratch, display_name), display_name)
+    if scratch:
+        out = out.replace(scratch.rstrip("/") + "/", "").replace(scratch, "")
+    # Safety net for a path built from a scratch dir other than this request's.
+    # Scoped to OUR prefix rather than to /tmp and /var generally: the broad
+    # version also rewrote legitimate paths an engine may cite (a mirror
+    # database under /var, say), and a plain "//" collapse corrupted every URL
+    # in a note — "https://..." came out as "https:/...".
+    out = re.sub(r"\S*/dnr-web-[^/\s]+/(\S+)", r"\1", out)
     return out.strip()
