@@ -7,17 +7,33 @@ fronts. It is deliberately thin: it owns routing decisions (inline vs queued) an
 result serving, and delegates all analysis to the orchestrator + engines.
 
 Endpoints:
-  GET  /health                 -> liveness
+  GET  /                        -> the upload page (dnareport.landing).
   POST /analyze                 -> small INLINE upload (23andMe, small beta-matrix,
                                    single VCF): detect -> run -> render -> return HTML.
                                    Heavy kinds are refused here with a pointer to the
                                    R2 upload flow (they must not stream through the
                                    front door; see dna-report-deploy/cloudflare).
+                                   Errors carry a structured body; a browser gets a
+                                   rendered refusal page unless it sends
+                                   X-Error-Format: json (the upload page does, so it
+                                   can show the reason in place).
+  GET  /result/{job_id}         -> serve a finished report (202 + waiting page while
+                                   the worker is still running it).
+  GET  /disclaimer              -> the single canonical product disclaimer.
+  GET  /demo/{blood,buccal}     -> bundled real sample reports.
+  GET  /demo/combined           -> methylome + genome merged into one report.
+  GET  /health                  -> liveness + what this instance can do.
   POST /enqueue                 -> called by the R2 upload Worker after a big file
                                    lands in R2: {r2_key, kind, n_samples?} -> push a
                                    job on the queue -> return {job_id}. Bearer-token
                                    auth (ENQUEUE_TOKEN), not reviewer-facing.
-  GET  /result/{job_id}         -> serve a finished report (202 if still running).
+  GET  /api/openapi.json,
+  GET  /api/docs                -> schema + Swagger for the JSON API. Key-gated, and
+                                   disabled entirely when no DNAREPORT_API_KEY is set.
+
+Uploaded files live in a per-request scratch dir that is removed before the
+response is returned — the reports promise deletion, so nothing may outlive the
+request.
 
 Queue + result store are configured by env (the deployment sets them); with no
 queue backend the /enqueue path is disabled and only inline analysis runs, so the
