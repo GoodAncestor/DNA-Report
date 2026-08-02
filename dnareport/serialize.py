@@ -12,7 +12,31 @@ protein resolvers), so JSON and HTML agree on where an entity points.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = "1.0"
+# 1.1 adds `magnitude` and `direction` per finding and `by_direction` to the
+# summary. Purely additive, so a 1.0 consumer keeps working — but the version
+# moves so one can feature-detect rather than probe for keys.
+SCHEMA_VERSION = "1.1"
+
+
+def _magnitude(f) -> float | None:
+    """The report's 0-10 interest score, or None if bio-core isn't importable
+    (the CLI can serialize without the renderer installed)."""
+    try:
+        from biocore.report.render import magnitude
+    except ImportError:
+        return None
+    return magnitude(f)
+
+
+def _direction(f) -> str | None:
+    """Direction of effect where the SOURCE asserts one ("adverse", "benign",
+    "protective", "actionable"), else "" — never a valence we invented. See
+    biocore.report.render.direction for the precedence rules."""
+    try:
+        from biocore.report.render import direction
+    except ImportError:
+        return None
+    return direction(f)
 
 
 def _finding_json(f, marker_url) -> dict:
@@ -34,6 +58,11 @@ def _finding_json(f, marker_url) -> dict:
         "marker": f.marker,
         "description": f.description,
         "tier": f.tier.value,
+        # The two ranking fields the HTML report shows. An agent consuming this
+        # would otherwise have to re-derive them from `stats` and re-implement
+        # the tier banding and ClinVar precedence rules to sort or triage.
+        "magnitude": _magnitude(f),
+        "direction": _direction(f),
         "topic": d.get("topic", "other"),
         "gene": gene,
         "protein": protein,
@@ -68,6 +97,9 @@ def result_to_json(result, marker_url=None) -> dict:
     from collections import Counter
     topics = Counter(f["topic"] for f in findings)
     tiers = Counter(f["tier"] for f in findings)
+    # only the findings a source actually classified; unset ones are not counted
+    # as a category, because "no direction stated" is an absence, not a verdict
+    directions = Counter(f["direction"] for f in findings if f.get("direction"))
     return {
         "schema_version": SCHEMA_VERSION,
         "input_kind": getattr(result.kind, "value", str(result.kind)),
@@ -78,6 +110,7 @@ def result_to_json(result, marker_url=None) -> dict:
             "n_markers": len({f["marker"] for f in findings}),
             "by_topic": dict(topics),
             "by_tier": dict(tiers),
+            "by_direction": dict(directions),
         },
         "clocks": [_clock_json(c) for c in result.clocks],
         "findings": findings,

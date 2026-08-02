@@ -184,3 +184,47 @@ def test_stream_to_disk_writes_a_normal_file(tmp_path):
     n = asyncio.run(uploads.stream_to_disk(FakeUpload(payload), str(dest)))
     assert n == len(payload)
     assert dest.read_bytes() == payload
+
+
+# ---- JSON surface carries the ranking fields -------------------------------
+
+def test_json_findings_carry_magnitude_and_direction():
+    """An agent consuming the JSON must not have to re-derive the two fields the
+    HTML report ranks and triages by."""
+    from dnareport.serialize import _finding_json, SCHEMA_VERSION
+    from biocore.providers.base import Finding, Tier, Category
+
+    pathogenic = Finding("1-100-A-G", "clinvar", "PKD1: Pathogenic", Tier.MODERATE,
+                         [Category.CLINICAL],
+                         detail={"gene": "PKD1", "clinical_significance": "Pathogenic",
+                                 "gold_stars": 2})
+    j = _finding_json(pathogenic, None)
+    assert j["direction"] == "adverse"
+    assert 4.0 <= j["magnitude"] <= 7.0        # inside the MODERATE band
+    assert SCHEMA_VERSION == "1.1"
+
+
+def test_json_direction_is_empty_for_unclassified_findings():
+    from dnareport.serialize import _finding_json
+    from biocore.providers.base import Finding, Tier, Category
+
+    trait = Finding("rs4988235", "geneask", "Lactase persistence", Tier.ROBUST,
+                    [Category.TRAIT], detail={"topic": "metabolic", "n": 120000})
+    assert _finding_json(trait, None)["direction"] == ""
+
+
+def test_summary_counts_only_classified_directions():
+    """"No direction stated" is an absence, not a bucket — it must not appear in
+    by_direction as if it were a verdict."""
+    from dnareport.serialize import result_to_json
+    from biocore.providers.base import Finding, Tier, Category
+
+    class R:
+        kind, tissue, engines, clocks, notes = "23andme", "blood", (), [], []
+        findings = [
+            Finding("m1", "clinvar", "d", Tier.MODERATE, [Category.CLINICAL],
+                    detail={"clinical_significance": "Pathogenic"}),
+            Finding("m2", "geneask", "d", Tier.ROBUST, [Category.TRAIT], detail={}),
+        ]
+    out = result_to_json(R())
+    assert out["summary"]["by_direction"] == {"adverse": 1}
