@@ -388,6 +388,11 @@ _LANDING_TEMPLATE = """<!doctype html>
    tick=setInterval(()=>{ elapsed.textContent=' ('+Math.round((Date.now()-t0)/1000)+'s)'; },1000);
  }
  function hideOverlay(){ overlay.style.display='none'; clearInterval(tick); elapsed.textContent=''; }
+ // progress line for multi-step uploads, so a 20 GB genome doesn't sit on
+ // "Generating your report" for twenty minutes with nothing moving
+ function setOverlay(msg){
+   const m=document.getElementById('overlay-msg'); if(m)m.textContent=msg;
+ }
 
  document.querySelectorAll('.demo-link').forEach(a=>a.addEventListener('click',showOverlay));
  // ALWAYS clear the overlay when the page is shown — including back/forward
@@ -507,6 +512,69 @@ _LANDING_TEMPLATE = """<!doctype html>
    return file;
  }
 
+ // ---- large-file upload (straight to R2) ------------------------------
+ // Heavy inputs — raw arrays, modBAMs, multi-sample VCFs — must not stream
+ // through the front door. They go to the R2 Worker at /submit/*, which mints a
+ // multipart upload, takes the parts at the edge, and enqueues a job; we then
+ // hand the user a claim link they can bookmark. Until now the app refused
+ // heavy kinds with a pointer to this flow and no way to reach it.
+ const R2_PART = 16 * 1024 * 1024;         // R2 wants >=5MB for all but the last
+ // the Worker validates `kind` against its own allow-list, so these strings
+ // must stay in step with KINDS in cloudflare/r2-upload-worker.js
+ const HEAVY_KIND = [
+   [/\\.idat$/i, 'idat'], [/\\.(mod)?bam$/i, 'modbam'],
+   [/\\.vcf(\\.gz)?$/i, 'vcf'], [/\\.bed(methyl)?$/i, 'bedmethyl'],
+   [/\\.csv$/i, 'beta_matrix'],
+ ];
+ function heavyKind(name){
+   for(const [re,k] of HEAVY_KIND){ if(re.test(name)) return k; }
+   return '23andme';
+ }
+
+ async function jsonOrThrow(r,what){
+   if(!r.ok){
+     const e=new Error(what+' failed (HTTP '+r.status+')'); e.status=r.status; throw e;
+   }
+   return await r.json();
+ }
+
+ // Returns a job id. Reports progress into the overlay as it goes.
+ async function largeUpload(file){
+   const kind=heavyKind(file.name);
+   setOverlay('Preparing a secure upload\\u2026');
+   const init=await jsonOrThrow(await fetch('/submit/init',{
+     method:'POST',headers:{'content-type':'application/json'},
+     body:JSON.stringify({filename:file.name,kind:kind,size:file.size})},
+   ),'Starting the upload');
+
+   const total=Math.max(1,Math.ceil(file.size/R2_PART));
+   const parts=[];
+   for(let i=0;i<total;i++){
+     const blob=file.slice(i*R2_PART,Math.min(file.size,(i+1)*R2_PART));
+     setOverlay('Uploading part '+(i+1)+' of '+total+'\\u2026');
+     const q='?key='+encodeURIComponent(init.key)+
+             '&uploadId='+encodeURIComponent(init.uploadId)+'&part='+(i+1);
+     const p=await jsonOrThrow(await fetch('/submit/part'+q,{method:'PUT',body:blob}),
+                               'Uploading part '+(i+1));
+     parts.push({partNumber:p.partNumber,etag:p.etag});
+   }
+
+   setOverlay('Finishing up\\u2026');
+   const em=document.getElementById('notify_email');
+   const nl=document.getElementById('newsletter');
+   const done=await jsonOrThrow(await fetch('/submit/complete',{
+     method:'POST',headers:{'content-type':'application/json'},
+     body:JSON.stringify({key:init.key,uploadId:init.uploadId,parts:parts,kind:kind,
+       notify_email:(em&&em.value)||'',newsletter:!!(nl&&nl.checked)})},
+   ),'Finishing the upload');
+
+   if(!done.job_id){
+     const e=new Error('The file uploaded, but no analysis job was created.');
+     e.noJob=true; throw e;
+   }
+   return done.job_id;
+ }
+
  // Map a transport-level failure onto the same structured shape, so a proxy
  // error page or a dropped connection reads like every other stop.
  function transportError(r){
@@ -528,13 +596,43 @@ _LANDING_TEMPLATE = """<!doctype html>
      message:'The server answered with HTTP '+r.status+'.'};
  }
 
+ // Kinds that can never run inline, so there is no point sending them to
+ // /analyze just to be told 413. Everything else tries the fast path first and
+ // falls back if the server says it is too heavy — the server stays the
+ // authority on what "heavy" means; this list only avoids a wasted round trip.
+ const ALWAYS_HEAVY=/\\.(idat|bam|modbam)$/i;
+
+ async function runLargeUpload(file){
+   try{
+     const jobId=await largeUpload(file);
+     window.location.href='/result/'+jobId;      // claim link; bookmarkable
+     return true;
+   }catch(err){
+     hideOverlay(); statusEl.textContent=''; go.disabled=false;
+     showFail(err&&err.noJob
+       ? {code:'not_queued',title:'Your file uploaded, but nothing picked it up',
+          message:String(err.message),
+          hint:'The upload itself succeeded. This is a problem on our side — the '+
+               'job queue did not accept it. Please try again shortly.'}
+       : {code:'large_upload_failed',title:'The large-file upload did not finish',
+          message:String((err&&err.message)||err),
+          hint:'Nothing was analysed. Large uploads resume from scratch, so it is '+
+               'safe to try again.'});
+     return false;
+   }
+ }
+
  go.onclick=async()=>{
    if(!chosen)return;
    go.disabled=true; clearFail();
    showOverlay();
+
+   if(ALWAYS_HEAVY.test(chosen.name)){ await runLargeUpload(chosen); return; }
+
    let r;
    try{
      const payload=await unwrap(chosen);
+     setOverlay('Generating your report\\u2026');
      statusEl.textContent='Analyzing\\u2026 this runs on the server and may take a moment.';
      const fd=new FormData(); fd.append('file',payload);
      if(tissue.value)fd.append('tissue',tissue.value);
@@ -560,13 +658,20 @@ _LANDING_TEMPLATE = """<!doctype html>
    // like the site breaking.
    if(r.ok&&ct.includes('text/html')){ showReport(await r.text()); return; }
 
-   hideOverlay(); statusEl.textContent=''; go.disabled=false;
    let err=null;
    if(ct.includes('application/json')){
      const j=await r.json().catch(()=>null);
      if(j) err=j.error||{code:'error',title:'That upload did not go through',
                           message:j.detail||JSON.stringify(j)};
    }
+   // The server decides what is too heavy to run inline. When it says so, take
+   // the large-file route rather than dead-ending the user on a 413 that names
+   // a flow they have no way to start.
+   if(r.status===413&&err&&err.code==='needs_large_file_upload'){
+     if(await runLargeUpload(chosen)) return;
+     return;
+   }
+   hideOverlay(); statusEl.textContent=''; go.disabled=false;
    showFail(err||transportError(r));
  };
 </script>
