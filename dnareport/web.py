@@ -588,8 +588,13 @@ async def analyze_r2(request: Request):
     local = os.path.join(scratch, os.path.basename(key))
     try:
         s3.download_file(R2_INCOMING_BUCKET, key, local)
-        local = unwrap_archive(local, scratch)
-        return _run_and_respond(local, tissue, filename=os.path.basename(key))
+        # returns (path, note) — a ZIP is unpacked to its genotype member, a .gz
+        # is passed through because detect and the parsers read gzip directly
+        display = os.path.basename(key)
+        local, unwrapped = unwrap_archive(local, scratch)
+        if unwrapped:
+            display = os.path.basename(local)
+        return _run_and_respond(local, tissue or None, filename=display)
     finally:
         # the object goes whether or not the analysis worked
         try:

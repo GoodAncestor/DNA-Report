@@ -77,6 +77,72 @@ def test_sign_mints_its_own_key_and_ignores_caller_paths():
     assert ".." not in key and "/etc/" not in key
 
 
+class _FakeS3:
+    """Enough of the S3 client for /analyze/r2, backed by a local file.
+
+    The route's real failure mode was never about R2: it mis-used
+    unwrap_archive's (path, note) return and passed a tuple into detect(). Every
+    test covering it skipped without an object store, so a 500 shipped. Faking
+    the three calls it makes keeps the download -> unwrap -> analyse path under
+    test everywhere.
+    """
+    def __init__(self, src, size=None):
+        self.src, self.size, self.deleted = src, size, []
+
+    def head_object(self, Bucket, Key):
+        return {"ContentLength": self.size if self.size is not None
+                else os.path.getsize(self.src)}
+
+    def download_file(self, Bucket, Key, dest):
+        import shutil
+        shutil.copyfile(self.src, dest)
+
+    def delete_object(self, Bucket, Key):
+        self.deleted.append(Key)
+
+
+def _fake_r2(monkeypatch, src, size=None):
+    fake = _FakeS3(src, size)
+    monkeypatch.setattr(web, "_r2_client", lambda: fake)
+    monkeypatch.setattr(web, "R2_ENDPOINT", "https://example.invalid")
+    return fake
+
+
+def test_analyze_r2_runs_the_real_pipeline_on_a_downloaded_object(monkeypatch, tmp_path):
+    # a small beta-matrix takes the inline path and renders; the point is that
+    # the route gets all the way through detect/analyse without a TypeError
+    src = tmp_path / "sample.csv"
+    src.write_text("probe,S1\ncg00000029,0.55\ncg00000109,0.72\n")
+    fake = _fake_r2(monkeypatch, str(src))
+    r = client.post("/analyze/r2",
+                    json={"key": f"{web.R2_INLINE_PREFIX}abc/sample.csv"})
+    assert r.status_code == 200, r.text[:300]
+
+
+def test_analyze_r2_deletes_the_object_even_when_analysis_fails(monkeypatch, tmp_path):
+    # the deletion promise cannot be conditional on success
+    src = tmp_path / "junk.txt"
+    src.write_text("this is not a genotype file at all\n")
+    fake = _fake_r2(monkeypatch, str(src))
+    key = f"{web.R2_INLINE_PREFIX}abc/junk.txt"
+    r = client.post("/analyze/r2", json={"key": key},
+                    headers={"X-Error-Format": "json"})
+    assert r.status_code >= 400          # unreadable -> refusal
+    assert key in fake.deleted           # ...and still cleaned up
+
+
+def test_analyze_r2_rechecks_size_against_the_object_not_the_claim(monkeypatch, tmp_path):
+    # signing trusted a client-supplied size; nothing stopped it PUTting more
+    src = tmp_path / "sample.csv"
+    src.write_text("probe,S1\ncg00000029,0.55\n")
+    fake = _fake_r2(monkeypatch, str(src), size=web.INLINE_R2_MAX + 1)
+    key = f"{web.R2_INLINE_PREFIX}abc/sample.csv"
+    r = client.post("/analyze/r2", json={"key": key},
+                    headers={"X-Error-Format": "json"})
+    assert r.status_code == 413
+    assert key in fake.deleted           # oversized object is not left behind
+
+
 def test_sign_without_an_object_store_says_so_rather_than_failing_obscurely():
     if web.R2_ENDPOINT:
         pytest.skip("this deployment has an object store")
