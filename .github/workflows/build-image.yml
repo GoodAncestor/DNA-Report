@@ -1,16 +1,17 @@
 # Build the DNA-Report web image and publish it to the container registry.
 #
 # Registry is a SINGLE swappable reference (the REGISTRY env below). It defaults
-# to ghcr.io as an interim — free, private, and natively authed to this org's
-# private repos. When goodancestor/infra stands up its own registry, change
-# REGISTRY (and the login step) here and the image ref in dna-report-deploy's
-# compose; nothing else moves.
+# to ghcr.io as an interim — free and natively authed to this org. When
+# goodancestor/infra stands up its own registry, change REGISTRY (and the login
+# step) here and the image ref in dna-report-deploy's compose; nothing else moves.
 #
-# The build must pull three PRIVATE repos (biocore, methylask, geneask) as
-# git-source deps. GITHUB_TOKEN only sees this repo, so a token with read access
-# to the sibling private repos is passed as the GIT_TOKEN build-arg. Store it as
-# the repo/org secret ORG_READ_TOKEN (a fine-grained PAT or GitHub App token with
-# read:packages + repo:read on the GoodAncestor private repos).
+# The build pulls biocore, methylask and geneask as git-source deps. All three
+# are PUBLIC repos (verified 2026-08-03), so no authentication is required for
+# that. ORG_READ_TOKEN is still passed through as a BuildKit secret because the
+# Dockerfile no-ops when it is unset — it costs nothing now and keeps the build
+# working the moment any of them goes private again. This comment previously
+# described them as private long after they were not; if that changes, change
+# this line with it.
 name: build-image
 on:
   push:
@@ -68,9 +69,10 @@ jobs:
           build-args: |
             GIT_COMMIT=${{ github.sha }}
             BUILD_TIME=${{ steps.build_id.outputs.time }}
-          # private sibling repos need read auth during pip install — passed as a
-          # BuildKit SECRET (never a build-arg: a build-arg's value is recorded in
-          # the image's layer history and would leak once the image is public).
+          # Not required while the sibling repos are public; passed anyway so the
+          # build keeps working if one goes private. Always a BuildKit SECRET,
+          # never a build-arg — a build-arg's value is recorded in the image's
+          # layer history and would leak once the image is public.
           secrets: |
             git_token=${{ secrets.ORG_READ_TOKEN }}
       # after each build, delete UNTAGGED versions (dangling layers every :sha
