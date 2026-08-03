@@ -245,3 +245,14 @@ def test_sign_without_an_object_store_says_so_rather_than_failing_obscurely():
         pytest.skip("this deployment has an object store")
     r = _sign(filename="genome.vcf.gz", size=1000)
     assert r.status_code == 503
+
+
+@pytest.mark.parametrize("path", ["/upload/sign", "/upload/multipart/create",
+                                  "/upload/multipart/sign",
+                                  "/upload/multipart/complete", "/analyze/r2"])
+def test_malformed_json_is_a_client_error_not_a_server_error(path):
+    # a trailing comma from a caller used to raise JSONDecodeError and surface as
+    # 500, which sends whoever is debugging looking for a fault on our side
+    r = client.post(path, content=b'{"key":[1,2,3,]}',
+                    headers={"content-type": "application/json"})
+    assert r.status_code == 400, f"{path} answered {r.status_code}"

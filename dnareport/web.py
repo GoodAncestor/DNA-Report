@@ -117,6 +117,20 @@ _QUEUE_KINDS = {"vcf", "vcf-multi", "idat", "modbam", "bedmethyl", "beta_matrix"
                 "23andme", "array_genotype"}
 
 
+async def _json_body(request) -> dict:
+    """Parse a JSON request body, answering 400 rather than 500 when it is not
+    JSON. A malformed body is the caller's mistake and should read as one — a
+    500 sends whoever is debugging it looking at our logs for a fault that is not
+    there, which is exactly what happened while testing this flow."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body is not valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+    return body
+
+
 def _require_own_key(key: str) -> None:
     """A caller may only name an object under the prefix this service mints.
 
@@ -535,7 +549,7 @@ async def upload_sign(request: Request):
     cannot be steered at an object it did not create.
     """
     _rate_limit(_client_key(request))
-    body = await request.json()
+    body = await _json_body(request)
     filename = str(body.get("filename") or "upload")
     try:
         size = int(body.get("size") or 0)
@@ -605,7 +619,7 @@ async def multipart_create(request: Request):
     The key is minted here and never taken from the caller.
     """
     _rate_limit(_client_key(request))
-    body = await request.json()
+    body = await _json_body(request)
     filename = str(body.get("filename") or "upload")
     if not _extension_supported(filename):
         raise UploadError(
@@ -643,7 +657,7 @@ async def multipart_sign(request: Request):
     early parts are still going up.
     """
     _rate_limit(_client_key(request))
-    body = await request.json()
+    body = await _json_body(request)
     key, upload_id = str(body.get("key") or ""), str(body.get("uploadId") or "")
     _require_own_key(key)
     parts = body.get("parts") or []
@@ -673,7 +687,7 @@ async def multipart_complete(request: Request):
     really in the bucket is within bounds — otherwise it is deleted and refused.
     """
     _rate_limit(_client_key(request))
-    body = await request.json()
+    body = await _json_body(request)
     key, upload_id = str(body.get("key") or ""), str(body.get("uploadId") or "")
     _require_own_key(key)
     parts = body.get("parts") or []
@@ -722,7 +736,7 @@ async def analyze_r2(request: Request):
     behind after a failed parse would quietly break that.
     """
     _rate_limit(_client_key(request))
-    body = await request.json()
+    body = await _json_body(request)
     key = str(body.get("key") or "")
     tissue = str(body.get("tissue") or "")
 
