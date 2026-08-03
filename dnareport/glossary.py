@@ -88,11 +88,71 @@ def glossary_html(findings: list) -> str:
 </section>"""
 
 
-# A finding links to #trait-age. Browsers do not reliably open a closed
-# <details> when navigating to an id inside it, so the link would appear to do
-# nothing — open it explicitly on arrival and on any later hash change.
-_OPEN_ON_TARGET = """<script>
+# Trait links open a popover in place. Jumping to the glossary would strand the
+# reader at the end of a 40-card report with no way back to where they were.
+#
+# Progressive enhancement: the anchor keeps its href, so without JS (or in a
+# printed copy) the link still lands on the glossary entry, which opens on
+# arrival. The popover CLONES the entry already in the document — no innerHTML
+# and no second copy of 47KB of prose.
+_OPEN_ON_TARGET = """<div id="glosspop" class="glosspop" hidden>
+  <button class="glosspop-x" aria-label="Close">&times;</button>
+  <div class="glosspop-body"></div>
+</div>
+<script>
 (function(){
+  var pop = document.getElementById('glosspop');
+  if(!pop) return;
+  var body = pop.querySelector('.glosspop-body');
+  var last = null;
+
+  function close(){
+    pop.hidden = true;
+    if(last){ try{ last.focus(); }catch(e){} last = null; }
+  }
+  function place(a){
+    var r = a.getBoundingClientRect();
+    pop.hidden = false;                       // measure only once displayed
+    var w = pop.offsetWidth, h = pop.offsetHeight;
+    var left = Math.min(Math.max(8, r.left + window.scrollX),
+                        window.scrollX + document.documentElement.clientWidth - w - 8);
+    var below = r.bottom + window.scrollY + 8;
+    var above = r.top + window.scrollY - h - 8;
+    var room = window.scrollY + window.innerHeight - below;
+    pop.style.left = left + 'px';
+    // flip above the word when there is no room beneath it
+    pop.style.top = (room < h + 16 && above > window.scrollY ? above : below) + 'px';
+  }
+  function open(a){
+    var id = (a.getAttribute('href')||'').replace(/^#/,'');
+    var entry = id && document.getElementById(id);
+    if(!entry) return false;                  // fall through to the plain jump
+    var title = entry.querySelector('summary');
+    var content = entry.querySelector('.gbody');
+    if(!content) return false;
+    while(body.firstChild) body.removeChild(body.firstChild);
+    var h4 = document.createElement('h4');
+    h4.textContent = title ? title.textContent : '';
+    body.appendChild(h4);
+    body.appendChild(content.cloneNode(true));
+    last = a;
+    place(a);
+    pop.querySelector('.glosspop-x').focus();
+    return true;
+  }
+
+  document.addEventListener('click', function(e){
+    var a = e.target.closest && e.target.closest('a.glossword');
+    if(a){ if(open(a)) e.preventDefault(); return; }
+    if(!pop.hidden && !pop.contains(e.target)) close();
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && !pop.hidden) close();
+  });
+  window.addEventListener('resize', close);
+
+  // Direct hash navigation (no-JS fallback, or a shared link): browsers do not
+  // reliably open a closed <details> when the target sits inside it.
   function openTarget(){
     var h = location.hash && location.hash.slice(1);
     if(!h) return;
@@ -129,5 +189,18 @@ _STYLE = """<style>
   max-width:74ch}
 .glossary .gcite{font-size:12px;color:var(--faint);margin-top:8px}
 .glossary .gcite a{color:var(--faint)}
-@media print{.glossary .gentry{break-inside:avoid}}
+/* popover: the primary way copy is read; the glossary below is the fallback,
+   the printable reference, and the browsable index */
+.glosspop{position:absolute;z-index:60;max-width:min(430px,calc(100vw - 16px));
+  max-height:min(62vh,540px);overflow:auto;background:var(--card);
+  border:1px solid var(--hair);border-radius:10px;padding:15px 17px 13px;
+  box-shadow:0 10px 34px rgba(0,0,0,.17)}
+.glosspop[hidden]{display:none}
+.glosspop h4{font-family:var(--serif);font-size:17px;margin:0 26px 9px 0;
+  letter-spacing:-.005em}
+.glosspop-x{position:absolute;top:7px;right:9px;border:0;background:none;
+  font-size:20px;line-height:1;color:var(--faint);cursor:pointer;padding:2px 5px}
+.glosspop-x:hover{color:var(--ink)}
+.glosspop .gbody{padding:0}
+@media print{.glossary .gentry{break-inside:avoid}.glosspop{display:none}}
 </style>"""

@@ -49,7 +49,7 @@ def test_anchors_match_the_links_findings_emit():
 def test_entries_are_collapsed_by_default():
     # 23 entries of full prose is ~46KB dumped on the page
     html = glossary_html([_F("age"), _F("bmi")])
-    assert html.count("<details") == 2
+    assert html.count("<details class='gentry'") == 2   # elements, not prose mentions
     assert "<details open" not in html and " open>" not in html
 
 
@@ -70,3 +70,37 @@ def test_a_targeted_entry_is_opened_on_arrival():
     # otherwise the link appears to do nothing
     html = glossary_html([_F("age")])
     assert "hashchange" in html or "location.hash" in html
+
+
+# --- click-to-popover -------------------------------------------------------
+
+def test_popover_container_is_emitted():
+    html = glossary_html([_F("age")])
+    assert "glosspop" in html
+
+
+def test_click_handler_is_delegated_to_trait_links():
+    # links are emitted by bio-core throughout the document, so the handler must
+    # be delegated rather than bound to elements present at script time
+    html = glossary_html([_F("age")])
+    assert "glossword" in html
+    assert "addEventListener('click'" in html or 'addEventListener("click"' in html
+
+
+def test_escape_and_outside_click_dismiss_are_wired():
+    html = glossary_html([_F("age")])
+    assert "Escape" in html
+
+
+def test_popover_reuses_the_glossary_entry_rather_than_duplicating_copy():
+    # the prose is already in the document once; duplicating it into markup would
+    # double a 47KB section
+    html = glossary_html([_F("age"), _F("bmi")])
+    assert html.count("What an association means") == 2   # one per entry, not four
+
+
+def test_the_jump_still_works_without_javascript():
+    # progressive enhancement: the anchor keeps its href so a no-JS reader lands
+    # on the glossary entry instead of nothing happening
+    html = glossary_html([_F("age")])
+    assert "id='trait-age'" in html
