@@ -42,3 +42,31 @@ def test_anchors_match_the_links_findings_emit():
     from biocore.report.render import glossary_anchor
     html = glossary_html([_F("age")])
     assert f"id='{glossary_anchor('age')}'" in html
+
+
+# --- collapsed by default ---------------------------------------------------
+
+def test_entries_are_collapsed_by_default():
+    # 23 entries of full prose is ~46KB dumped on the page
+    html = glossary_html([_F("age"), _F("bmi")])
+    assert html.count("<details") == 2
+    assert "<details open" not in html and " open>" not in html
+
+
+def test_summary_shows_the_trait_name_so_the_list_is_scannable():
+    html = glossary_html([_F("smoking")])
+    summary = html.split("<summary")[1].split("</summary>")[0]
+    assert "Smoking" in summary
+
+
+def test_prose_is_still_present_just_hidden():
+    html = glossary_html([_F("smoking")])
+    assert "What it is not" in html
+    assert "pubmed.ncbi.nlm.nih.gov" in html
+
+
+def test_a_targeted_entry_is_opened_on_arrival():
+    # a finding links to #trait-age; landing on a collapsed entry must open it,
+    # otherwise the link appears to do nothing
+    html = glossary_html([_F("age")])
+    assert "hashchange" in html or "location.hash" in html

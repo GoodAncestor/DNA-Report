@@ -69,9 +69,13 @@ def glossary_html(findings: list) -> str:
             f"<a href='https://pubmed.ncbi.nlm.nih.gov/{_html.escape(str(p))}/'>"
             f"{_html.escape(str(p))}</a>" for p in (v.get("pmids") or []))
         cite = f"<div class='gcite'>sources: {pm}</div>" if pm else ""
+        # Collapsed by default: expanded, 23 entries is ~46KB of prose in front of
+        # a reader who came for their own results. The summary line keeps the list
+        # scannable — you can see which traits are explained without reading any.
         entries.append(
-            f"<article class='gentry' id='{_html.escape(glossary_anchor(k))}'>"
-            f"<h3>{_html.escape(str(v.get('label', k)))}</h3>{body}{cite}</article>")
+            f"<details class='gentry' id='{_html.escape(glossary_anchor(k))}'>"
+            f"<summary>{_html.escape(str(v.get('label', k)))}</summary>"
+            f"<div class='gbody'>{body}{cite}</div></details>")
 
     return f"""<section class="glossary">
   <h2>What these traits mean</h2>
@@ -79,18 +83,43 @@ def glossary_html(findings: list) -> str:
   what researchers measured and what an association does and does not support —
   none of them is a statement about you.</p>
   {''.join(entries)}
+{_OPEN_ON_TARGET}
 {_STYLE}
 </section>"""
 
+
+# A finding links to #trait-age. Browsers do not reliably open a closed
+# <details> when navigating to an id inside it, so the link would appear to do
+# nothing — open it explicitly on arrival and on any later hash change.
+_OPEN_ON_TARGET = """<script>
+(function(){
+  function openTarget(){
+    var h = location.hash && location.hash.slice(1);
+    if(!h) return;
+    var el = document.getElementById(h);
+    if(el && el.tagName === 'DETAILS'){ el.open = true;
+      el.scrollIntoView({block:'center'}); }
+  }
+  window.addEventListener('hashchange', openTarget);
+  document.addEventListener('DOMContentLoaded', openTarget);
+  openTarget();
+})();
+</script>"""
 
 _STYLE = """<style>
 .glossary{margin:44px 0 0;padding-top:22px;border-top:2px solid var(--ink)}
 .glossary h2{font-family:var(--serif);font-size:26px;margin:0 0 6px}
 .glossary .glede{color:var(--mut);font-size:14px;max-width:62ch;margin:0 0 20px}
-.glossary .gentry{border-top:1px solid var(--line);padding:16px 0 4px}
+.glossary .gentry{border-top:1px solid var(--line)}
 .glossary .gentry:first-of-type{border-top:none}
-.glossary .gentry h3{font-family:var(--serif);font-size:19px;margin:0 0 10px;
-  letter-spacing:-.005em}
+.glossary .gentry>summary{font-family:var(--serif);font-size:17px;padding:11px 0;
+  cursor:pointer;list-style:none;display:flex;align-items:center;gap:9px}
+.glossary .gentry>summary::-webkit-details-marker{display:none}
+.glossary .gentry>summary::before{content:"+";font-family:var(--mono);font-size:13px;
+  color:var(--accent);width:11px;flex:none}
+.glossary .gentry[open]>summary::before{content:"\2013"}
+.glossary .gentry>summary:hover{color:var(--accent)}
+.glossary .gbody{padding:2px 0 14px 20px}
 .glossary .gentry:target{background:var(--accent-soft);border-radius:8px;
   padding-left:13px;padding-right:13px;margin:0 -13px}
 .glossary .gsec{margin:0 0 9px}
