@@ -88,7 +88,28 @@ def _clock_tiles(result) -> str:
     if not tiles:
         return ""
     return f"""<h3 class="sub">Epigenetic age</h3>
-<div class="tiles">{''.join(tiles)}</div>"""
+<div class="tiles">{''.join(tiles)}</div>{_mismatch_note(result)}"""
+
+
+def _mismatch_note(result) -> str:
+    """The reason a clock was withheld, stated once beneath the tiles.
+
+    The tiles are terse on purpose — four of them each carrying a full sentence
+    is a wall of disclaimer. But terseness dropped the actual finding: a tile
+    reading "not reported / trained on blood" never says the number would not be
+    meaningful, which is the whole point of flagging a tissue mismatch. Saying it
+    once here is what the tile note was always supposed to be short *against*.
+    """
+    bad = [c for c in result.clocks if getattr(c, "tissue_mismatch", False)]
+    if not bad:
+        return ""
+    trained = sorted({str(getattr(c, "trained_tissue", "blood")) for c in bad})
+    tissue = getattr(result, "tissue", None)
+    n = f"{len(bad)} of these clocks are" if len(bad) > 1 else "One of these clocks is"
+    where = f" and this sample is {_e(tissue)}" if tissue else ""
+    return (f"""<p class="tmismatch">{n} <strong>not valid for this sample type</strong>"""
+            f""" — they are trained on {_e(' and '.join(trained))}{where}, so their """
+            f"""numbers would not be meaningful here and are not reported.</p>""")
 
 
 def _scale(sample_beta: float, groups: list) -> str:
@@ -204,6 +225,11 @@ _STYLE = """<style>
   overflow:hidden;margin-bottom:7px}
 .snapshot .tmeter i{display:block;height:100%;background:var(--accent)}
 .snapshot .tnote{font-size:12px;color:var(--faint);line-height:1.45}
+/* the withheld-clock reason: readable rather than fine print, since it is the
+   difference between "no number" and "a number that would have misled you" */
+.snapshot .tmismatch{font-size:13px;color:var(--mut);line-height:1.5;
+  margin:11px 0 0;max-width:74ch}
+.snapshot .tmismatch strong{color:var(--ink);font-weight:600}
 
 .snapshot .xcards{display:grid;gap:13px}
 .snapshot .xcard{background:var(--card);border:1px solid var(--line);

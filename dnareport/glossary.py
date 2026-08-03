@@ -163,6 +163,19 @@ _OPEN_ON_TARGET = """<div id="glosspop" class="glosspop" hidden>
   window.addEventListener('hashchange', openTarget);
   document.addEventListener('DOMContentLoaded', openTarget);
   openTarget();
+
+  // Print/save must carry the definitions. The CSS override alone is not enough:
+  // some print engines re-derive layout from the element's real `open` state
+  // rather than from computed style, so the entries are opened for real and the
+  // reader's own open/closed choices restored afterwards — the same approach the
+  // truncated finding sections already take.
+  var entries = [].slice.call(document.querySelectorAll('.glossary details.gentry'));
+  window.addEventListener('beforeprint', function(){
+    entries.forEach(function(d){ d.dataset.wasOpen = d.open ? '1' : ''; d.open = true; });
+  });
+  window.addEventListener('afterprint', function(){
+    entries.forEach(function(d){ d.open = !!d.dataset.wasOpen; });
+  });
 })();
 </script>"""
 
@@ -202,5 +215,14 @@ _STYLE = """<style>
   font-size:20px;line-height:1;color:var(--faint);cursor:pointer;padding:2px 5px}
 .glosspop-x:hover{color:var(--ink)}
 .glosspop .gbody{padding:0}
-@media print{.glossary .gentry{break-inside:avoid}.glosspop{display:none}}
+/* Collapsing is a screen convenience. A closed <details> prints as a heading and
+   nothing else, so saving the report would produce 23 trait names and none of
+   the copy explaining them — the glossary's whole reason to exist. Print gets
+   the complete document, matching how truncated finding sections already behave. */
+@media print{
+  .glossary .gentry{break-inside:avoid}
+  .glosspop{display:none}
+  .glossary .gentry:not([open])>*:not(summary){display:block !important}
+  .glossary .gentry>summary::before{content:""}
+}
 </style>"""
