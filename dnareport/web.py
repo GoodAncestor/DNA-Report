@@ -195,9 +195,11 @@ def _render_full(result, out_path: str) -> str:
     several dozen. The swap is restored afterwards so the JSON surface, which
     does not go through here, still carries them as ordinary findings.
     """
-    from .highlights import split_reference_findings, highlights_html
+    from .highlights import (split_reference_findings, split_display_findings,
+                             highlights_html)
 
     _, rest = split_reference_findings(list(result.findings or []))
+    rest, _withheld = split_display_findings(rest)
     original = result.findings
     result.findings = rest
     try:

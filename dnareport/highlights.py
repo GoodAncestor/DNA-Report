@@ -29,6 +29,27 @@ def split_reference_findings(findings: list):
     return highlights, rest
 
 
+# Trait classes withheld from the rendered report. Only "covariate" — a study
+# design variable that describes the sample rather than the person. "other" is
+# NOT here: those concepts were flagged ambiguous by curation, not confirmed, and
+# suppressing on an unconfirmed guess loses real findings.
+_WITHHELD_TRAIT_CLASSES = {"covariate"}
+
+
+def split_display_findings(findings: list):
+    """(keep, dropped). Findings whose trait is a study-design variable are not
+    about the reader, so they are withheld from the report.
+
+    Findings with no trait_class are KEPT: only ~400 of 6,515 catalog traits are
+    classified, so absence means unclassified, never safe-to-drop.
+    """
+    keep, dropped = [], []
+    for f in findings:
+        cls = (f.detail or {}).get("trait_class")
+        (dropped if cls in _WITHHELD_TRAIT_CLASSES else keep).append(f)
+    return keep, dropped
+
+
 def _e(v) -> str:
     return _html.escape(str(v))
 
