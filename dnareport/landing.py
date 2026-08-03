@@ -21,6 +21,7 @@ Presentation notes (why it looks the way it does):
 from __future__ import annotations
 
 from . import __version__
+from .uploads import MAX_UPLOAD_BYTES
 
 TISSUES = ["blood", "saliva", "buccal", "other"]
 
@@ -611,10 +612,10 @@ _LANDING_TEMPLATE = """<!doctype html>
  // Size routing is not an optimisation — it is what makes a whole-genome upload
  // work at all. An oversized POST is refused AT THE EDGE, before the app can
  // answer, so the app's own 413 never runs and neither does anything keyed to
- // it. The threshold sits below the smallest proxy body limit rather than at the
- // app's own MAX_UPLOAD_BYTES, because the app's limit is only reachable for
- // files the edge already agreed to pass.
- const INLINE_MAX = 90 * 1024 * 1024;
+ // it. Substituted from the server's MAX_UPLOAD_BYTES so the two cannot drift:
+ // a client that disagrees with the server either wastes a doomed upload or
+ // queues a file that would have run instantly.
+ const INLINE_MAX = __INLINE_MAX__;
 
  async function runLargeUpload(file){
    try{
@@ -696,4 +697,10 @@ _LANDING_TEMPLATE = """<!doctype html>
 </script>
 </body></html>"""
 
-LANDING_HTML = _LANDING_TEMPLATE.replace("__VERSION__", __version__)
+# The inline ceiling is the server's, not a second opinion: the page routes by
+# size before posting, and a client threshold that drifted from the server's
+# would either waste an upload the edge will refuse or queue a file that would
+# have returned a report immediately.
+LANDING_HTML = (_LANDING_TEMPLATE
+                .replace("__VERSION__", __version__)
+                .replace("__INLINE_MAX__", str(MAX_UPLOAD_BYTES)))

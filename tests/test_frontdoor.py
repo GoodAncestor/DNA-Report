@@ -25,6 +25,10 @@ def test_oversized_file_reaches_the_large_upload_instead_of_dead_ending():
     body. Both are served-page behaviour, so both are asserted on the markup."""
     page = client.get("/").text
     assert "const INLINE_MAX" in page                  # size gate exists
+    # the gate must be the SERVER's number, not a second opinion that can drift
+    from dnareport.uploads import MAX_UPLOAD_BYTES
+    assert f"const INLINE_MAX = {MAX_UPLOAD_BYTES};" in page
+    assert "__INLINE_MAX__" not in page                # placeholder substituted
     assert "if(chosen.size>INLINE_MAX){ await runLargeUpload(chosen); return; }" in page
     # the 413 recovery must NOT be narrowed back to one error code: an edge 413
     # carries no body, so requiring err.code is what broke whole-genome upload

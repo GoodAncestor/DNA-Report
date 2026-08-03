@@ -39,7 +39,19 @@ import zipfile
 # Cap for the inline front door. Real consumer genotype exports are 15-25 MB
 # uncompressed; whole-genome VCFs and arrays are far larger and belong on the
 # large-file (R2) path, not here.
-MAX_UPLOAD_BYTES = int(os.environ.get("DNAREPORT_MAX_UPLOAD_BYTES", 256 * 1024 * 1024))
+#
+# The ceiling is set by the EDGE, not by us: Cloudflare refuses a request body
+# over its per-plan limit before the app is reached at all, so any value above
+# that limit is unenforceable — the app simply never sees those requests. The
+# zone is on Business, whose limit is 200 MB, so this sits just under it with
+# room for multipart overhead. The previous 256 MB was above the edge cap and
+# therefore dead: no request that large could ever have arrived to be refused.
+#
+# The landing page derives its own routing threshold from this number (see
+# landing.py) so the client and the server cannot disagree about what is too big.
+# Raising it past the edge limit is not dangerous — an oversized upload now falls
+# back to the parts flow rather than dead-ending — but it is still fiction.
+MAX_UPLOAD_BYTES = int(os.environ.get("DNAREPORT_MAX_UPLOAD_BYTES", 180 * 1024 * 1024))
 
 # Shown to the user whenever we could not read a file. Kept in one place so the
 # error page, the API body and the landing-page copy cannot drift apart.
