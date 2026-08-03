@@ -608,6 +608,14 @@ _LANDING_TEMPLATE = """<!doctype html>
  // authority on what "heavy" means; this list only avoids a wasted round trip.
  const ALWAYS_HEAVY=/\\.(idat|bam|modbam)$/i;
 
+ // Size routing is not an optimisation — it is what makes a whole-genome upload
+ // work at all. An oversized POST is refused AT THE EDGE, before the app can
+ // answer, so the app's own 413 never runs and neither does anything keyed to
+ // it. The threshold sits below the smallest proxy body limit rather than at the
+ // app's own MAX_UPLOAD_BYTES, because the app's limit is only reachable for
+ // files the edge already agreed to pass.
+ const INLINE_MAX = 90 * 1024 * 1024;
+
  async function runLargeUpload(file){
    try{
      const jobId=await largeUpload(file);
@@ -634,6 +642,9 @@ _LANDING_TEMPLATE = """<!doctype html>
    showOverlay();
 
    if(ALWAYS_HEAVY.test(chosen.name)){ await runLargeUpload(chosen); return; }
+   // Too big to survive the edge: go straight to the parts upload rather than
+   // spending the user's bandwidth on a POST that cannot be accepted.
+   if(chosen.size>INLINE_MAX){ await runLargeUpload(chosen); return; }
 
    let r;
    try{
@@ -670,10 +681,12 @@ _LANDING_TEMPLATE = """<!doctype html>
      if(j) err=j.error||{code:'error',title:'That upload did not go through',
                           message:j.detail||JSON.stringify(j)};
    }
-   // The server decides what is too heavy to run inline. When it says so, take
-   // the large-file route rather than dead-ending the user on a 413 that names
-   // a flow they have no way to start.
-   if(r.status===413&&err&&err.code==='needs_large_file_upload'){
+   // ANY 413 means "too heavy for the instant path", and the large-file route is
+   // always the right answer to that — so recover on the status alone. Keying
+   // this to one error code meant it only ever caught the app's own refusal: a
+   // 413 from the edge arrives with no JSON body at all, so `err` is null and an
+   // oversized genome dead-ended on a message naming a flow it could not start.
+   if(r.status===413){
      if(await runLargeUpload(chosen)) return;
      return;
    }

@@ -18,6 +18,20 @@ def test_landing_has_upload_and_demos():
     assert 'id="tissue"' in r.text          # tissue selector present
 
 
+def test_oversized_file_reaches_the_large_upload_instead_of_dead_ending():
+    """A whole-genome file is refused AT THE EDGE, so the app's own 413 — and
+    anything keyed to its error code — never runs. The page therefore has to
+    decide by size before posting, and to recover on a bare 413 with no JSON
+    body. Both are served-page behaviour, so both are asserted on the markup."""
+    page = client.get("/").text
+    assert "const INLINE_MAX" in page                  # size gate exists
+    assert "if(chosen.size>INLINE_MAX){ await runLargeUpload(chosen); return; }" in page
+    # the 413 recovery must NOT be narrowed back to one error code: an edge 413
+    # carries no body, so requiring err.code is what broke whole-genome upload
+    assert "if(r.status===413){" in page
+    assert "err.code==='needs_large_file_upload'" not in page
+
+
 def test_disclaimer_served():
     r = client.get("/disclaimer")
     assert r.status_code == 200
