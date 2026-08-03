@@ -291,10 +291,22 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     # markers): reframes a scary ClinVar hit with how common the variant actually is.
     # Per-variant + disk-cached, so it's a bounded number of lookups, no mirror.
     try:
-        from geneask.annotators.gnomad_freq import annotate_findings as _gnomad
-        got = _gnomad(findings)
+        from geneask.annotators.gnomad_freq import (annotate_findings as _gnomad,
+                                                    default_budget as _gnomad_budget)
+        # Capped per report: gnomAD is someone else's rate-limited API and this
+        # endpoint is public, so a rare-variant-heavy genome must not be able to
+        # spend an unbounded number of their requests. Say so in the notes when a
+        # report hits the cap — a silently truncated enrichment reads as "this
+        # variant isn't in gnomAD", which is a different and wrong claim.
+        budget = _gnomad_budget()
+        got = _gnomad(findings, budget=budget)
         if got:
             notes.append(f"gnomAD: added population frequency to {got} variant findings")
+        if budget.halted:
+            notes.append("gnomAD: rate-limited by the API; some frequencies were not looked up")
+        elif budget.remaining == 0 and budget.spent:
+            notes.append(f"gnomAD: stopped at this report's {budget.spent}-lookup cap; "
+                         "uncached variants were left un-annotated")
     except Exception:
         pass
 
