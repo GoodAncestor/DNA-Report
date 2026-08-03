@@ -42,37 +42,43 @@ def _reference_findings(betas: dict, tissue: str | None = None):
     whole-blood current-smoker median.
     """
     from biocore.providers.base import Finding, Tier, Category
-    from methylask.reference import positions_for_sample
+    from methylask.reference import (positions_for_sample, load_reference_table,
+                                     marker_meaning, reference_for)
 
+    table = load_reference_table()
     findings = []
-    for mp in positions_for_sample(betas, tissue=tissue):
+    for mp in positions_for_sample(betas, tissue=tissue, table=table):
+        meaning = marker_meaning(table, mp.probe)
+        base = {"beta": mp.sample_beta, **meaning}
+
         if mp.suppressed_reason:
+            ref_tissues = sorted({r.get("tissue", "") for r in reference_for(table, mp.probe)
+                                  if r.get("tissue")})
             findings.append(Finding(
                 marker=mp.probe, source="marker_reference",
-                description=(f"Your value is {mp.sample_beta:.3f}. No comparison is "
-                             f"shown: {mp.suppressed_reason}."),
+                description=(f"No comparison shown for a {tissue} sample — published "
+                             f"values are {', '.join(ref_tissues)} only."
+                             if tissue and ref_tissues else
+                             f"No comparison shown: {mp.suppressed_reason}."),
                 tier=Tier.UNKNOWN, categories=[Category.AGING],
-                detail={"beta": mp.sample_beta, "reference_withheld": True}))
+                detail={**base, "reference_withheld": True,
+                        "reference_tissue": ", ".join(ref_tissues) or None,
+                        "suppressed_reason": mp.suppressed_reason}))
             continue
-        parts, pmids = [], []
-        for p in mp.positions:
-            parts.append(f"{p.reference_group} {p.stat or 'value'} {p.reference_beta} "
-                         f"({p.delta:+.3f})")
-            if p.pmid:
-                pmids.append(p.pmid)
+
+        groups = [{"group": p.reference_group, "beta": p.reference_beta,
+                   "stat": p.stat, "n": p.n, "tissue": p.tissue, "pmid": p.pmid}
+                  for p in mp.positions]
         nearest = min(mp.positions, key=lambda p: abs(p.delta))
         findings.append(Finding(
             marker=mp.probe, source="marker_reference",
-            description=(f"Your value is {mp.sample_beta:.3f}; closest published "
-                         f"group is {nearest.reference_group} "
-                         f"({nearest.stat or 'value'} {nearest.reference_beta}). "
-                         f"Published levels — {'; '.join(parts)}."),
+            description=(f"Closest published group: {nearest.reference_group}."),
             tier=Tier.MODERATE, categories=[Category.AGING],
-            detail={"beta": mp.sample_beta,
+            detail={**base, "groups": groups,
                     "reference_tissue": nearest.tissue,
                     "reference_n": nearest.n,
                     "nearest_group": nearest.reference_group},
-            pmids=sorted(set(pmids))))
+            pmids=sorted({p.pmid for p in mp.positions if p.pmid})))
     return findings
 
 
@@ -97,13 +103,20 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
     for p in (EwasCatalogProvider(), ClinVarProvider(), GdcProvider()):
         reg.register(p)
 
+    from methylask.normalize import base_probe
+
     clock_results = []
     markers = []
+    base_betas: dict = {}
     if kind == InputKind.BETA_MATRIX:
         sample = read_beta_matrix(path)
         markers = sample.markers                      # list[str] of probe ids
+        # Clocks are keyed by BASE probe id. EPICv2 exports carry replicate
+        # suffixes (cg#####_TC21); without stripping them every clock resolves
+        # zero CpGs and the report silently shows no age.
+        base_betas = {base_probe(k): v for k, v in sample.betas.items()}
         # clocks run on the WHOLE profile (cheap arithmetic, no network)
-        clock_results = _clocks.run_all(sample.betas, tissue=tissue)
+        clock_results = _clocks.run_all(base_betas, tissue=tissue)
 
     capped = markers[:max_markers] if (max_markers and markers) else markers
     rep = reg.annotate(capped) if capped else reg.annotate([])
@@ -111,10 +124,8 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
 
     # Curated reference context: local, so it sees the whole profile rather than
     # the capped subset. Keyed by base probe id (EPICv2 carries replicate suffixes).
-    if kind == InputKind.BETA_MATRIX and markers:
-        from methylask.normalize import base_probe
-        base = {base_probe(k): v for k, v in sample.betas.items()}
-        findings += _reference_findings(base, tissue=tissue)
+    if kind == InputKind.BETA_MATRIX and base_betas:
+        findings += _reference_findings(base_betas, tissue=tissue)
 
     return findings, reg.status(), clock_results
 

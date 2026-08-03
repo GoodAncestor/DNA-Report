@@ -176,52 +176,33 @@ def _queue():
     return redis.from_url(QUEUE_URL)
 
 
-def _clocks_html(result) -> str:
-    """Render the epigenetic-clock section (a MethylAsk concept, so composed here
-    in the product layer rather than in bio-core's finding renderer). Clocks that
-    are not valid for the sample tissue, or implausible, are shown as flagged —
-    never as a bare misleading number."""
-    if not result.clocks:
-        return ""
-    tis = result.tissue or "unspecified"
-    rows = []
-    for c in result.clocks:
-        if getattr(c, "valid", c.age is not None):
-            val = f"{c.age:.1f} yrs"
-            cls = "ok"
-        else:
-            val = "not reported"
-            cls = "flag"
-        rows.append(
-            f"<tr class='{cls}'><td>{_html.escape(c.clock)}</td>"
-            f"<td>{val}</td><td class='note'>{_html.escape(c.note)}</td></tr>")
-    return f"""<section class="clocks">
-<h2>Epigenetic age (aging clocks)</h2>
-<p class="csub">Sample type: <b>{_html.escape(tis)}</b>. A clock is only meaningful
-on the tissue it was trained on; clocks that do not apply to this sample are marked
-below rather than given a number.</p>
-<table><tr><th>Clock</th><th>Estimated age</th><th>Basis</th></tr>
-{''.join(rows)}</table>
-<style>
-.clocks{{margin:0 0 26px}}.clocks table{{width:100%;border-collapse:collapse;font-size:14px}}
-.clocks th,.clocks td{{text-align:left;padding:7px 10px;border-bottom:1px solid #e4e4e2;vertical-align:top}}
-.clocks .note{{color:#666;font-size:13px}}.clocks tr.flag td{{color:#8a5a00}}
-.clocks .csub{{color:#666;font-size:14px;margin:2px 0 12px}}
-</style></section>"""
-
-
 def _render_full(result, out_path: str) -> str:
-    """Compose the browser report: clocks section (product layer) + bio-core's
-    finding/disclaimer render. Returns the path written."""
-    render(result, out_path)                       # bio-core findings + disclaimer
+    """Compose the browser report: the highlights section (aging clocks + cited
+    reference positions, product layer) + bio-core's finding/disclaimer render.
+
+    Reference positions are pulled OUT of the findings list before bio-core
+    renders it — they are the headline of a methylome report, not one card among
+    several dozen. The swap is restored afterwards so the JSON surface, which
+    does not go through here, still carries them as ordinary findings.
+    """
+    from .highlights import split_reference_findings, highlights_html
+
+    _, rest = split_reference_findings(list(result.findings or []))
+    original = result.findings
+    result.findings = rest
+    try:
+        render(result, out_path)                   # bio-core findings + disclaimer
+    finally:
+        result.findings = original
+
     body = Path(out_path).read_text()
-    clocks = _clocks_html(result)
-    if clocks:
-        # inject the clocks section after the first heading
+    top = highlights_html(result)
+    if top:
+        # inject the highlights section at the top of the document body
         if "<body>" in body:
-            body = body.replace("<body>", "<body>\n" + clocks, 1)
+            body = body.replace("<body>", "<body>\n" + top, 1)
         else:
-            body = clocks + body
+            body = top + body
         Path(out_path).write_text(body)
     return out_path
 
