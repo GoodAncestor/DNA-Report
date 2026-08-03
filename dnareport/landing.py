@@ -20,8 +20,10 @@ Presentation notes (why it looks the way it does):
 """
 from __future__ import annotations
 
+import json as _json
+
 from . import __version__
-from .uploads import MAX_UPLOAD_BYTES
+from .uploads import MAX_UPLOAD_BYTES, ACCEPTED_FORMATS
 
 TISSUES = ["blood", "saliva", "buccal", "other"]
 
@@ -333,11 +335,108 @@ _LANDING_TEMPLATE = """<!doctype html>
    [/\\.bed(methyl)?(\\.gz)?$/i,  'bedMethyl methylation calls',      'light'],
    [/23andme|genome_.*\\.txt$/i,  '23andMe raw export',               'light'],
    [/ancestry|ftdna|myheritage|livingdna/i, 'Consumer genotype export', 'light'],
-   [/\\.(csv|tsv|txt)(\\.gz)?$/i, 'Methylation beta-value table',     'light'],
+   // .csv/.tsv/.txt carry several different formats, so the name alone cannot
+   // name one — the content sniff below replaces this label once it has read the
+   // head. Claiming "beta-value table" here told a 1.4 GB genotype TSV it had
+   // been recognised, moments before the upload it could never have survived.
+   [/\\.(csv|tsv|txt)(\\.gz)?$/i, 'Tabular data — reading the header',  'light'],
  ];
  function describe(f){
    for(const [re,label,weight] of KIND_HINTS){ if(re.test(f.name)) return {label,weight}; }
-   return {label:'Unrecognised — the server will sniff the contents', weight:'light'};
+   return {label:'Unrecognised — checking the contents', weight:'light'};
+ }
+
+ // ---- pre-upload format gate -------------------------------------------
+ // A file we cannot read must be refused BEFORE it is uploaded. A whole genome
+ // is a multi-hour upload on a domestic line, and telling someone at the end of
+ // it that the format was never readable is the worst ordering available to us.
+ // So the rules dnareport.detect applies server-side are applied here first, to
+ // the head of the file, and an unreadable file never starts uploading.
+ //
+ // The sniff decompresses only that prefix, in memory, purely in order to read
+ // it. The file itself is uploaded byte-for-byte unchanged — this is a check,
+ // not a transformation of what gets sent.
+ //
+ // The server re-detects from the full file and remains the only authority. This
+ // gate is deliberately CONSERVATIVE: it refuses only what it positively cannot
+ // account for, so a format the server could still rescue is never blocked here.
+ const ACCEPTED_FORMATS = __ACCEPTED_FORMATS__;
+
+ // Cheapest gate first: an extension we have no parser for is refused without
+ // reading a byte. This is what catches .bz2 — which nothing in this product has
+ // ever supported — and .pdf, .docx and friends. Extensions we DO handle are let
+ // through to the content sniff rather than trusted, because .txt/.csv/.tsv each
+ // carry several different formats and only the header says which.
+ const ALLOWED_EXT = ['txt','csv','tsv','vcf','bed','bedmethyl','idat','bam','modbam'];
+ function extAllowed(name){
+   const n = String(name).toLowerCase().replace(/\\.gz$/,'');
+   if(/\\.zip$/.test(n)) return true;
+   const m = n.match(/\\.([a-z0-9]+)$/);
+   return !!m && ALLOWED_EXT.indexOf(m[1]) !== -1;
+ }
+
+ const SNIFF_BYTES = 256 * 1024;
+ const SNIFF_BINARY = /\\.(idat|bam|modbam)$/i;   // opaque; the extension is the contract
+ const SNIFF_VCF = /\\.vcf(\\.gz)?$/i;
+
+ async function sniffHead(file){
+   let blob = file.slice(0, SNIFF_BYTES);
+   if(/\\.gz$/i.test(file.name) && typeof DecompressionStream!=='undefined'){
+     try{
+       // a sliced gzip stream ends mid-member, so the stream errors after
+       // yielding what it could decode — that prefix is all the sniff needs
+       blob = await new Response(
+         blob.stream().pipeThrough(new DecompressionStream('gzip'))).blob();
+     }catch(err){ /* undecodable prefix: fall through to extension rules */ }
+   }
+   try{ return await blob.text(); }catch(err){ return ''; }
+ }
+
+ // Mirrors dnareport/detect.py. Returns a human label, or null when nothing in
+ // the file identifies it as something we can parse.
+ function classifyHead(name, text){
+   if(SNIFF_BINARY.test(name)) return 'Raw array / BAM';
+   if(SNIFF_VCF.test(name)) return 'VCF genome';
+   // A zip's head is compressed member data, so sniffing it reads as noise and
+   // would refuse the single most common upload we get — 23andMe, AncestryDNA,
+   // MyHeritage and FTDNA all hand the user a .zip. The archive is opened later
+   // (unzip() inline, the server for everything else) and the member inside is
+   // what gets judged; refusing here on unreadable bytes would be judging the
+   // container.
+   if(/\\.zip$/i.test(name)) return 'Compressed archive — opened after upload';
+   const lines = String(text).split('\\n', 500);
+   const head = lines.filter(l=>l.startsWith('#'));
+   const body = lines.filter(l=>!l.startsWith('#') && l.trim());
+   if(head.some(l=>/fileformat=vcf/i.test(l))) return 'VCF genome';
+   if(head.some(l=>/23andme/i.test(l))) return '23andMe raw export';
+   if(head.some(l=>/ancestry|ftdna|myheritage|livingdna/i.test(l)))
+     return 'Consumer genotype export';
+   if(body.length){
+     const c = body[0].replace(/\\r$/,'').split('\\t');
+     if(c.length===4 && /^(rs|i)/i.test(c[0]) && c[3].trim().length<=2)
+       return 'Consumer genotype export';
+     if(c.length>=11 && c[3] && /^[a-z]+,(CG|CHG|CHH),/i.test(c[3]))
+       return 'bedMethyl methylation calls';
+     for(const bl of body.slice(0,5)){
+       const cc = bl.replace(/\\r$/,'').split(',');
+       if(cc.length>=2 && /^(cg|ch)/i.test(cc[0])) return 'Methylation beta-value table';
+     }
+   }
+   return null;
+ }
+
+ function refuseUnreadable(f, text){
+   const cols = (String(text).split('\\n',500)
+     .filter(l=>!l.startsWith('#') && l.trim())[0]||'').split('\\t').length;
+   const shape = cols>1 ? ' Its first data row has '+cols+' tab-separated columns, '+
+     'which does not match any format we parse.' : '';
+   showFail({code:'unreadable_format',
+     title:'We cannot read this file, so there is no point uploading it',
+     message:'Nothing in the start of '+f.name+' identifies it as a format this '+
+             'analyser understands.'+shape,
+     hint:'Checked before uploading on purpose — a whole genome can take hours to '+
+          'send, and finding this out afterwards would waste all of it.',
+     accepted:ACCEPTED_FORMATS});
  }
  function humanSize(b){
    if(b < 1024) return b + ' B';
@@ -352,8 +451,8 @@ _LANDING_TEMPLATE = """<!doctype html>
    recogName=document.getElementById('recog-name'), recogMeta=document.getElementById('recog-meta');
  let chosen=null;
 
- function pick(f){
-   chosen=f; go.disabled=!f; statusEl.textContent='';
+ async function pick(f){
+   chosen=f; go.disabled=!f; statusEl.textContent=''; clearFail();
    if(!f){ recog.classList.remove('show'); return; }
    const d=describe(f);
    recogName.textContent=f.name;
@@ -366,6 +465,28 @@ _LANDING_TEMPLATE = """<!doctype html>
      Object.assign(document.createElement('b'),{textContent:d.label}),
      document.createTextNode(' \\u00b7 '+humanSize(f.size)+' \\u00b7 '+route));
    recog.classList.add('show');
+
+   // extension gate first — no read, no upload, immediate answer
+   if(!extAllowed(f.name)){
+     go.disabled=true;
+     showFail({code:'unsupported_format',
+       title:'We do not have a parser for this kind of file',
+       message:'Nothing in this analyser reads '+(f.name.match(/\\.[a-z0-9.]+$/i)||['that format'])[0]+
+               ' files, so uploading it could not produce a report.',
+       hint:'Checked before uploading on purpose — a whole genome can take hours '+
+            'to send, and finding this out afterwards would waste all of it.',
+       accepted:ACCEPTED_FORMATS});
+     return;
+   }
+
+   // read the head and confirm we can actually parse this, before any upload
+   const text = await sniffHead(f);
+   if(chosen!==f) return;                       // a newer pick superseded this one
+   const label = classifyHead(f.name, text);
+   if(label===null){ go.disabled=true; refuseUnreadable(f, text); return; }
+   recogMeta.replaceChildren(
+     Object.assign(document.createElement('b'),{textContent:label}),
+     document.createTextNode(' \\u00b7 '+humanSize(f.size)+' \\u00b7 '+route));
  }
  fileIn.onchange=e=>pick(e.target.files[0]);
 
@@ -701,6 +822,10 @@ _LANDING_TEMPLATE = """<!doctype html>
 # size before posting, and a client threshold that drifted from the server's
 # would either waste an upload the edge will refuse or queue a file that would
 # have returned a report immediately.
+# ACCEPTED_FORMATS is substituted rather than restated: the refusal panel lists
+# what we take, and a hand-copied second list is a promise that silently stops
+# being true the first time a format is added.
 LANDING_HTML = (_LANDING_TEMPLATE
                 .replace("__VERSION__", __version__)
-                .replace("__INLINE_MAX__", str(MAX_UPLOAD_BYTES)))
+                .replace("__INLINE_MAX__", str(MAX_UPLOAD_BYTES))
+                .replace("__ACCEPTED_FORMATS__", _json.dumps(ACCEPTED_FORMATS)))
