@@ -96,6 +96,36 @@ R2_INCOMING_BUCKET = os.environ.get("R2_BUCKET", "dna-report-incoming")
 # an object belonging to the queued flow.
 R2_INLINE_PREFIX = "inline/"
 
+# Queued uploads keep the `incoming/` prefix the Cloudflare Worker has always
+# used: the alien workers pull by r2_key and the lifecycle rule already targets
+# it, so changing it would strand both for no gain.
+R2_QUEUED_PREFIX = "incoming/"
+
+# R2 requires >= 5 MB for every part except the last. 16 MB matches what the
+# Worker-proxied flow used, so a browser's memory profile per part is unchanged.
+R2_PART_SIZE = 16 * 1024 * 1024
+
+# Ceiling for a queued upload. Matches the Cloudflare Worker's own MAX_BYTES so
+# the two paths cannot disagree about what is acceptable — the Worker route still
+# exists and still enforces its own.
+MULTIPART_MAX = int(os.environ.get("DNAREPORT_MULTIPART_MAX", 20 * 1024**3))
+
+# Kinds a queued job may declare. Mirrors KINDS in the Worker and the worker's own
+# dispatch; the analysis re-detects from the file regardless, so this is a gate on
+# what may be enqueued rather than a statement about what the file is.
+_QUEUE_KINDS = {"vcf", "vcf-multi", "idat", "modbam", "bedmethyl", "beta_matrix",
+                "23andme", "array_genotype"}
+
+
+def _require_own_key(key: str) -> None:
+    """A caller may only name an object under the prefix this service mints.
+
+    Without this, `key` is an arbitrary string handed to complete/sign/delete
+    against a bucket that also holds other people's uploads.
+    """
+    if not key.startswith(R2_QUEUED_PREFIX) or ".." in key:
+        raise HTTPException(status_code=400, detail="unknown object")
+
 
 def _r2_client():
     """S3 client configured for R2.
@@ -544,6 +574,139 @@ async def upload_sign(request: Request):
     return {"key": key, "url": url, "expires_in": 900}
 
 
+def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
+                 notify_email: str = "", newsletter: bool = False) -> str:
+    """Push a heavy job and return its id. Shared by /enqueue (called by the
+    Cloudflare Worker) and the presigned multipart flow (where the app completes
+    the upload itself and there is no Worker in the path at all)."""
+    q = _queue()
+    if q is None:
+        raise HTTPException(status_code=503, detail="no queue backend configured")
+    job_id = uuid.uuid4().hex
+    job = {"job_id": job_id, "r2_key": r2_key, "kind": kind, "n_samples": n_samples}
+    email = (notify_email or "").strip()
+    if email and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        job["notify_email"] = email
+        job["newsletter"] = bool(newsletter)
+    q.rpush("dnareport:jobs", json.dumps(job))
+    return job_id
+
+
+@app.post("/upload/multipart/create")
+async def multipart_create(request: Request):
+    """Begin a presigned multipart upload for a heavy file.
+
+    The parts used to be PUT to the Cloudflare Worker, which streamed each into
+    R2. That put every byte of a whole genome through the zone, where the edge
+    inspects request bodies and refuses what it cannot parse — so a compressed
+    genome could not be uploaded at all, by any route. Here the browser talks to
+    R2 directly and the front door only ever sees small JSON.
+
+    The key is minted here and never taken from the caller.
+    """
+    _rate_limit(_client_key(request))
+    body = await request.json()
+    filename = str(body.get("filename") or "upload")
+    if not _extension_supported(filename):
+        raise UploadError(
+            "unsupported_format", "We do not have a parser for this kind of file",
+            f"Nothing in this analyser reads {os.path.splitext(filename)[1] or 'that'} files.",
+            hint="Checked before the upload rather than after it.",
+            status=415, accepted=True)
+    if not R2_ENDPOINT:
+        raise HTTPException(status_code=503, detail="object store not configured")
+    try:
+        size = int(body.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > MULTIPART_MAX:
+        raise UploadError(
+            "too_large", "That file is larger than we accept",
+            f"This upload is {size / (1024**3):.1f} GB; the ceiling is "
+            f"{MULTIPART_MAX // (1024**3)} GB.",
+            hint="If this is a whole-genome BAM, a VCF of the same sample is "
+                 "far smaller and is what the analysis actually reads.",
+            status=413)
+
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(filename))[:120] or "upload"
+    key = f"{R2_QUEUED_PREFIX}{uuid.uuid4().hex}/{safe}"
+    mp = _r2_client().create_multipart_upload(Bucket=R2_INCOMING_BUCKET, Key=key)
+    return {"key": key, "uploadId": mp["UploadId"], "part_size": R2_PART_SIZE}
+
+
+@app.post("/upload/multipart/sign")
+async def multipart_sign(request: Request):
+    """Presigned PUT URLs for a batch of part numbers.
+
+    Signed in batches rather than all at once so a multi-gigabyte upload does not
+    mint hundreds of URLs up front, all expiring on the same clock while the
+    early parts are still going up.
+    """
+    _rate_limit(_client_key(request))
+    body = await request.json()
+    key, upload_id = str(body.get("key") or ""), str(body.get("uploadId") or "")
+    _require_own_key(key)
+    parts = body.get("parts") or []
+    if not isinstance(parts, list) or not parts or len(parts) > 100:
+        raise HTTPException(status_code=400, detail="parts must be 1-100 numbers")
+    s3 = _r2_client()
+    urls = {}
+    for n in parts:
+        n = int(n)
+        if n < 1 or n > 10000:
+            raise HTTPException(status_code=400, detail="bad part number")
+        urls[str(n)] = s3.generate_presigned_url(
+            "upload_part",
+            Params={"Bucket": R2_INCOMING_BUCKET, "Key": key,
+                    "UploadId": upload_id, "PartNumber": n},
+            ExpiresIn=3600)
+    return {"urls": urls}
+
+
+@app.post("/upload/multipart/complete")
+async def multipart_complete(request: Request):
+    """Finish the upload, verify what actually landed, then enqueue.
+
+    This is the checkpoint. Everything before it was asserted by the client: the
+    size at create time was a number it supplied, and nothing stopped it sending
+    something else. So the object is HEADed here and enqueued only if what is
+    really in the bucket is within bounds — otherwise it is deleted and refused.
+    """
+    _rate_limit(_client_key(request))
+    body = await request.json()
+    key, upload_id = str(body.get("key") or ""), str(body.get("uploadId") or "")
+    _require_own_key(key)
+    parts = body.get("parts") or []
+    if not isinstance(parts, list) or not parts:
+        raise HTTPException(status_code=400, detail="no parts")
+    if not R2_ENDPOINT:
+        raise HTTPException(status_code=503, detail="object store not configured")
+
+    s3 = _r2_client()
+    s3.complete_multipart_upload(
+        Bucket=R2_INCOMING_BUCKET, Key=key, UploadId=upload_id,
+        MultipartUpload={"Parts": [{"PartNumber": int(p["partNumber"]),
+                                    "ETag": str(p["etag"])} for p in parts]})
+    try:
+        head = s3.head_object(Bucket=R2_INCOMING_BUCKET, Key=key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="upload not found after completion")
+    if head.get("ContentLength", 0) > MULTIPART_MAX:
+        s3.delete_object(Bucket=R2_INCOMING_BUCKET, Key=key)
+        raise UploadError("too_large", "That file is larger than we accept",
+                          "The completed object exceeds the upload ceiling.",
+                          hint="Nothing was analysed.", status=413)
+
+    kind = str(body.get("kind") or "")
+    if kind not in _QUEUE_KINDS:
+        s3.delete_object(Bucket=R2_INCOMING_BUCKET, Key=key)
+        raise HTTPException(status_code=400, detail="unknown kind")
+    job_id = _enqueue_job(key, kind, int(body.get("n_samples") or 1),
+                          str(body.get("notify_email") or ""),
+                          bool(body.get("newsletter")))
+    return {"job_id": job_id, "status": "queued", "r2_key": key}
+
+
 @app.post("/analyze/r2")
 async def analyze_r2(request: Request):
     """Analyse an object the browser just PUT to R2, and answer with the report.
@@ -687,21 +850,14 @@ def enqueue(payload: dict, authorization: str = Header(default="")):
     """Called by the R2 upload Worker (not reviewers). Push a heavy job."""
     if not ENQUEUE_TOKEN or authorization != f"Bearer {ENQUEUE_TOKEN}":
         raise HTTPException(status_code=401, detail="bad enqueue token")
-    q = _queue()
-    if q is None:
-        raise HTTPException(status_code=503, detail="no queue backend configured")
-    job_id = uuid.uuid4().hex
-    job = {"job_id": job_id, "r2_key": payload["r2_key"], "kind": payload["kind"],
-           "n_samples": payload.get("n_samples", 1)}
     # Optional, UNBUNDLED consent (see the upload form): a user may give an email
     # ONLY to be notified their report is ready, and SEPARATELY opt in to the
     # newsletter. The two are independent — an email for delivery is never added
     # to a mailing list unless `newsletter` is also true. Both default off.
-    email = (payload.get("notify_email") or "").strip()
-    if email and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-        job["notify_email"] = email
-        job["newsletter"] = bool(payload.get("newsletter"))
-    q.rpush("dnareport:jobs", json.dumps(job))
+    job_id = _enqueue_job(payload["r2_key"], payload["kind"],
+                          payload.get("n_samples", 1),
+                          payload.get("notify_email") or "",
+                          payload.get("newsletter"))
     return {"job_id": job_id, "status": "queued"}
 
 

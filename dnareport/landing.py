@@ -667,31 +667,51 @@ _LANDING_TEMPLATE = """<!doctype html>
  }
 
  // Returns a job id. Reports progress into the overlay as it goes.
+ // Parts go STRAIGHT to R2 on presigned URLs. They used to be PUT to a Cloudflare
+ // Worker which streamed each into storage, which meant every byte of a whole
+ // genome crossed the zone — where the edge inspects request bodies and refuses
+ // what it cannot parse. A compressed genome therefore had no working route at
+ // all: too big for the instant path, and blocked on the parts path. Now the
+ // front door only ever sees small JSON, which is the part inspection can read.
  async function largeUpload(file){
    const kind=heavyKind(file.name);
    setOverlay('Preparing a secure upload\\u2026');
-   const init=await jsonOrThrow(await fetch('/submit/init',{
-     method:'POST',headers:{'content-type':'application/json'},
+   const init=await jsonOrThrow(await fetch('/upload/multipart/create',{
+     method:'POST',headers:{'content-type':'application/json','X-Error-Format':'json'},
      body:JSON.stringify({filename:file.name,kind:kind,size:file.size})},
    ),'Starting the upload');
 
-   const total=Math.max(1,Math.ceil(file.size/R2_PART));
+   const partSize=init.part_size||R2_PART;
+   const total=Math.max(1,Math.ceil(file.size/partSize));
    const parts=[];
-   for(let i=0;i<total;i++){
-     const blob=file.slice(i*R2_PART,Math.min(file.size,(i+1)*R2_PART));
-     setOverlay('Uploading part '+(i+1)+' of '+total+'\\u2026');
-     const q='?key='+encodeURIComponent(init.key)+
-             '&uploadId='+encodeURIComponent(init.uploadId)+'&part='+(i+1);
-     const p=await jsonOrThrow(await fetch('/submit/part'+q,{method:'PUT',body:blob}),
-                               'Uploading part '+(i+1));
-     parts.push({partNumber:p.partNumber,etag:p.etag});
+   // URLs are signed in batches: minting hundreds up front for a multi-gigabyte
+   // file would start every expiry clock while the first parts are still going up
+   const BATCH=50;
+   for(let start=0;start<total;start+=BATCH){
+     const nums=[];
+     for(let n=start+1;n<=Math.min(total,start+BATCH);n++) nums.push(n);
+     const signed=await jsonOrThrow(await fetch('/upload/multipart/sign',{
+       method:'POST',headers:{'content-type':'application/json'},
+       body:JSON.stringify({key:init.key,uploadId:init.uploadId,parts:nums})},
+     ),'Preparing part URLs');
+
+     for(const n of nums){
+       const blob=file.slice((n-1)*partSize,Math.min(file.size,n*partSize));
+       setOverlay('Uploading part '+n+' of '+total+'\\u2026');
+       const r=await fetch(signed.urls[String(n)],{method:'PUT',body:blob});
+       if(!r.ok) throw new Error('Uploading part '+n+' failed (HTTP '+r.status+')');
+       // R2 returns the part's ETag; completion needs every one of them
+       const etag=r.headers.get('etag');
+       if(!etag) throw new Error('Part '+n+' uploaded but returned no ETag');
+       parts.push({partNumber:n,etag:etag});
+     }
    }
 
    setOverlay('Finishing up\\u2026');
    const em=document.getElementById('notify_email');
    const nl=document.getElementById('newsletter');
-   const done=await jsonOrThrow(await fetch('/submit/complete',{
-     method:'POST',headers:{'content-type':'application/json'},
+   const done=await jsonOrThrow(await fetch('/upload/multipart/complete',{
+     method:'POST',headers:{'content-type':'application/json','X-Error-Format':'json'},
      body:JSON.stringify({key:init.key,uploadId:init.uploadId,parts:parts,kind:kind,
        notify_email:(em&&em.value)||'',newsletter:!!(nl&&nl.checked)})},
    ),'Finishing the upload');

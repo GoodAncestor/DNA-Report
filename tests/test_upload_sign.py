@@ -143,6 +143,103 @@ def test_analyze_r2_rechecks_size_against_the_object_not_the_claim(monkeypatch, 
     assert key in fake.deleted           # oversized object is not left behind
 
 
+class _FakeMultipartS3:
+    """The multipart calls, without R2. Records what it was asked to do so the
+    gating can be asserted rather than assumed."""
+    def __init__(self, size=10):
+        self.size, self.completed, self.deleted, self.signed = size, [], [], []
+
+    def create_multipart_upload(self, Bucket, Key):
+        return {"UploadId": "upload-1"}
+
+    def generate_presigned_url(self, op, Params, ExpiresIn):
+        self.signed.append((op, Params["Key"], Params.get("PartNumber")))
+        return f"https://r2.invalid/{Params['Key']}?part={Params.get('PartNumber')}"
+
+    def complete_multipart_upload(self, Bucket, Key, UploadId, MultipartUpload):
+        self.completed.append(Key)
+
+    def head_object(self, Bucket, Key):
+        return {"ContentLength": self.size}
+
+    def delete_object(self, Bucket, Key):
+        self.deleted.append(Key)
+
+
+def _fake_mp(monkeypatch, size=10):
+    fake = _FakeMultipartS3(size)
+    monkeypatch.setattr(web, "_r2_client", lambda: fake)
+    monkeypatch.setattr(web, "R2_ENDPOINT", "https://example.invalid")
+    return fake
+
+
+def test_multipart_create_mints_its_own_key(monkeypatch):
+    _fake_mp(monkeypatch)
+    # a supported extension, so it gets past the format gate and actually reaches
+    # key minting — the traversal is what is under test here
+    r = client.post("/upload/multipart/create",
+                    json={"filename": "../../etc/passwd.vcf", "size": 100})
+    assert r.status_code == 200
+    key = r.json()["key"]
+    assert key.startswith(web.R2_QUEUED_PREFIX)
+    assert ".." not in key and "/etc/" not in key
+
+
+def test_multipart_create_refuses_a_format_with_no_parser(monkeypatch):
+    _fake_mp(monkeypatch)
+    assert client.post("/upload/multipart/create",
+                       json={"filename": "x.bz2", "size": 100}).status_code == 415
+
+
+@pytest.mark.parametrize("key", ["inline/abc/x.vcf", "../x", "other/x.vcf"])
+def test_multipart_routes_refuse_keys_they_did_not_mint(monkeypatch, key):
+    # sign/complete take a key from the caller; without this it is an arbitrary
+    # string aimed at a bucket holding other people's uploads
+    _fake_mp(monkeypatch)
+    assert client.post("/upload/multipart/sign",
+                       json={"key": key, "uploadId": "u", "parts": [1]}).status_code == 400
+    assert client.post("/upload/multipart/complete",
+                       json={"key": key, "uploadId": "u",
+                             "parts": [{"partNumber": 1, "etag": "e"}],
+                             "kind": "vcf"}).status_code == 400
+
+
+def test_multipart_complete_verifies_the_object_then_enqueues(monkeypatch):
+    fake = _fake_mp(monkeypatch, size=10)
+    seen = {}
+    monkeypatch.setattr(web, "_enqueue_job",
+                        lambda *a, **k: seen.setdefault("called", True) and "job1" or "job1")
+    key = f"{web.R2_QUEUED_PREFIX}abc/genome.vcf.gz"
+    r = client.post("/upload/multipart/complete",
+                    json={"key": key, "uploadId": "u",
+                          "parts": [{"partNumber": 1, "etag": "e"}], "kind": "vcf"})
+    assert r.status_code == 200
+    assert fake.completed == [key]
+    assert seen.get("called") is True
+
+
+def test_multipart_complete_refuses_an_oversized_object_and_deletes_it(monkeypatch):
+    # the size at create time was the client's claim; this is where it is checked
+    fake = _fake_mp(monkeypatch, size=web.MULTIPART_MAX + 1)
+    key = f"{web.R2_QUEUED_PREFIX}abc/genome.vcf.gz"
+    r = client.post("/upload/multipart/complete",
+                    json={"key": key, "uploadId": "u",
+                          "parts": [{"partNumber": 1, "etag": "e"}], "kind": "vcf"},
+                    headers={"X-Error-Format": "json"})
+    assert r.status_code == 413
+    assert key in fake.deleted
+
+
+def test_multipart_complete_refuses_an_unknown_kind_and_deletes_it(monkeypatch):
+    fake = _fake_mp(monkeypatch)
+    key = f"{web.R2_QUEUED_PREFIX}abc/genome.vcf.gz"
+    r = client.post("/upload/multipart/complete",
+                    json={"key": key, "uploadId": "u",
+                          "parts": [{"partNumber": 1, "etag": "e"}], "kind": "wat"})
+    assert r.status_code == 400
+    assert key in fake.deleted
+
+
 def test_sign_without_an_object_store_says_so_rather_than_failing_obscurely():
     if web.R2_ENDPOINT:
         pytest.skip("this deployment has an object store")
