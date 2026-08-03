@@ -27,6 +27,55 @@ class ReportResult:
     scan_stats: dict = field(default_factory=dict)  # metrics about what was scanned
 
 
+def _reference_findings(betas: dict, tissue: str | None = None):
+    """Position a beta profile against MethylAsk's curated reference values.
+
+    These are absolute population levels quoted from named publications, so the
+    report can say "your value is X; never-smokers median Y [PMID]" rather than
+    leaving a bare number. Local arithmetic, so it runs on the FULL profile —
+    unlike the provider annotation above, which is capped because it is one
+    network lookup per marker.
+
+    A reference measured in a tissue this sample is not is reported as
+    unavailable (Tier.UNKNOWN) with the reason, never rendered as a comparison:
+    at cg05575921 the pediatric buccal demo would otherwise land nearest the
+    whole-blood current-smoker median.
+    """
+    from biocore.providers.base import Finding, Tier, Category
+    from methylask.reference import positions_for_sample
+
+    findings = []
+    for mp in positions_for_sample(betas, tissue=tissue):
+        if mp.suppressed_reason:
+            findings.append(Finding(
+                marker=mp.probe, source="marker_reference",
+                description=(f"Your value is {mp.sample_beta:.3f}. No comparison is "
+                             f"shown: {mp.suppressed_reason}."),
+                tier=Tier.UNKNOWN, categories=[Category.AGING],
+                detail={"beta": mp.sample_beta, "reference_withheld": True}))
+            continue
+        parts, pmids = [], []
+        for p in mp.positions:
+            parts.append(f"{p.reference_group} {p.stat or 'value'} {p.reference_beta} "
+                         f"({p.delta:+.3f})")
+            if p.pmid:
+                pmids.append(p.pmid)
+        nearest = min(mp.positions, key=lambda p: abs(p.delta))
+        findings.append(Finding(
+            marker=mp.probe, source="marker_reference",
+            description=(f"Your value is {mp.sample_beta:.3f}; closest published "
+                         f"group is {nearest.reference_group} "
+                         f"({nearest.stat or 'value'} {nearest.reference_beta}). "
+                         f"Published levels — {'; '.join(parts)}."),
+            tier=Tier.MODERATE, categories=[Category.AGING],
+            detail={"beta": mp.sample_beta,
+                    "reference_tissue": nearest.tissue,
+                    "reference_n": nearest.n,
+                    "nearest_group": nearest.reference_group},
+            pmids=sorted(set(pmids))))
+    return findings
+
+
 def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
                    max_markers: int | None = 40):
     """Call the MethylAsk engine -> (findings, provider_status, clocks). Import
@@ -58,7 +107,16 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
 
     capped = markers[:max_markers] if (max_markers and markers) else markers
     rep = reg.annotate(capped) if capped else reg.annotate([])
-    return rep.all_findings(), reg.status(), clock_results
+    findings = rep.all_findings()
+
+    # Curated reference context: local, so it sees the whole profile rather than
+    # the capped subset. Keyed by base probe id (EPICv2 carries replicate suffixes).
+    if kind == InputKind.BETA_MATRIX and markers:
+        from methylask.normalize import base_probe
+        base = {base_probe(k): v for k, v in sample.betas.items()}
+        findings += _reference_findings(base, tissue=tissue)
+
+    return findings, reg.status(), clock_results
 
 
 def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
