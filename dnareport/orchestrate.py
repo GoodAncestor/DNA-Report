@@ -27,6 +27,26 @@ class ReportResult:
     scan_stats: dict = field(default_factory=dict)  # metrics about what was scanned
 
 
+def _attach_sample_readings(findings: list, betas: dict):
+    """Put the reader's own value on each finding about one of their probes.
+
+    A finding that says a site is associated with lower methylation, without ever
+    showing what this person's methylation was, is a fact about a cohort rather
+    than about them. The reference highlight cards are skipped — they already plot
+    the reading on their own scale, so annotating them would state it twice.
+    """
+    for f in findings:
+        if f.source == "marker_reference":
+            continue
+        v = betas.get(f.marker)
+        if v is None:
+            continue
+        v = round(float(v), 3)
+        f.detail = {**(f.detail or {}), "your reading": v}
+        f.description = f"{f.description} — your reading here is {v:.3f}"
+    return findings
+
+
 def _reference_findings(betas: dict, tissue: str | None = None):
     """Position a beta profile against MethylAsk's curated reference values.
 
@@ -120,7 +140,7 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
 
     capped = markers[:max_markers] if (max_markers and markers) else markers
     rep = reg.annotate(capped) if capped else reg.annotate([])
-    findings = rep.all_findings()
+    findings = _attach_sample_readings(rep.all_findings(), base_betas)
 
     # Curated reference context: local, so it sees the whole profile rather than
     # the capped subset. Keyed by base probe id (EPICv2 carries replicate suffixes).
