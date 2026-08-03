@@ -208,6 +208,18 @@ def _render_full(result, out_path: str) -> str:
         result.findings = original
 
     body = Path(out_path).read_text()
+
+    # Glossary goes at the END, after the findings it explains — the copy is
+    # per-trait while findings are per-marker, so it is written once here and
+    # each finding links to its entry rather than restating it.
+    from .glossary import glossary_html
+    gloss = glossary_html(rest)
+    if gloss:
+        if "</body>" in body:
+            body = body.replace("</body>", gloss + "\n</body>", 1)
+        else:
+            body += gloss
+
     top = highlights_html(result)
     if top:
         # inject the highlights section at the top of the document body
