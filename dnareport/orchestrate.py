@@ -34,6 +34,10 @@ def _attach_sample_readings(findings: list, betas: dict):
     showing what this person's methylation was, is a fact about a cohort rather
     than about them. The reference highlight cards are skipped — they already plot
     the reading on their own scale, so annotating them would state it twice.
+
+    Only `detail` is set, never the description: bio-core groups findings into one
+    card per marker, so the renderer shows this once in the card header. Writing
+    it into each description restated the same number up to 30 times per card.
     """
     for f in findings:
         if f.source == "marker_reference":
@@ -41,9 +45,7 @@ def _attach_sample_readings(findings: list, betas: dict):
         v = betas.get(f.marker)
         if v is None:
             continue
-        v = round(float(v), 3)
-        f.detail = {**(f.detail or {}), "your reading": v}
-        f.description = f"{f.description} — your reading here is {v:.3f}"
+        f.detail = {**(f.detail or {}), "your reading": round(float(v), 3)}
     return findings
 
 
