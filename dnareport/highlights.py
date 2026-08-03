@@ -92,7 +92,7 @@ def _scale(sample_beta: float, groups: list) -> str:
     return f"""<div class="scale">
   <span class="you" style="left:{x:.2f}%"><b>you {float(sample_beta):.3f}</b><i></i></span>
   <div class="track">{''.join(marks)}</div>
-  <div class="axis"><span>0.0</span><span>methylation (beta)</span><span>1.0</span></div>
+  <span class="cap capl">0</span><span class="cap capr">1</span>
 </div>"""
 
 
@@ -184,9 +184,9 @@ _STYLE = """<style>
 .snapshot .tmeter i{display:block;height:100%;background:var(--accent)}
 .snapshot .tnote{font-size:12px;color:var(--faint);line-height:1.45}
 
-.snapshot .xcards{display:grid;gap:16px}
+.snapshot .xcards{display:grid;gap:13px}
 .snapshot .xcard{background:var(--card);border:1px solid var(--line);
-  border-left:3px solid var(--accent);border-radius:9px;padding:16px 18px 14px}
+  border-left:3px solid var(--accent);border-radius:9px;padding:14px 16px 12px}
 .snapshot .xcard.withheld{border-left-color:var(--speculative);
   background:transparent;border-style:dashed;border-left-style:solid}
 .snapshot .xcard header{display:flex;align-items:baseline;gap:10px;
@@ -195,13 +195,13 @@ _STYLE = """<style>
   letter-spacing:-.005em}
 .snapshot .probe{font-family:var(--mono);font-size:11px;color:var(--faint)}
 
-.snapshot .scale{margin:42px 0 14px;position:relative}
+.snapshot .scale{margin:40px 0 12px;position:relative;padding-bottom:78px}
 .snapshot .track{position:relative;height:5px;border-radius:3px;
   background:linear-gradient(90deg,var(--accent-soft),var(--hair))}
 .snapshot .gmark{position:absolute;top:0;transform:translateX(-50%);text-align:center}
 .snapshot .gmark i{display:block;width:1px;background:var(--hair);margin:0 auto}
-.snapshot .gmark.lv0 i{height:11px}
-.snapshot .gmark.lv1 i{height:37px}
+.snapshot .gmark.lv0 i{height:21px}
+.snapshot .gmark.lv1 i{height:46px}
 .snapshot .gmark em{display:block;font-style:normal;font-size:10.5px;
   color:var(--mut);white-space:nowrap;margin-top:3px}
 .snapshot .gmark b{display:block;font-family:var(--mono);font-size:10px;
@@ -213,15 +213,17 @@ _STYLE = """<style>
   border-radius:999px;padding:2px 8px 3px}
 .snapshot .you i{display:block;width:1px;height:10px;background:var(--accent);
   margin:0 auto}
-.snapshot .axis{display:flex;justify-content:space-between;margin-top:82px;
-  font-family:var(--mono);font-size:10px;color:var(--faint)}
+.snapshot .cap{position:absolute;top:8px;font-family:var(--mono);font-size:10px;
+  color:var(--faint)}
+.snapshot .cap.capl{left:0}
+.snapshot .cap.capr{right:0}
 
-.snapshot .reading{font-size:14.5px;margin:6px 0 8px;color:var(--ink)}
+.snapshot .reading{font-size:14px;margin:2px 0 6px;color:var(--ink)}
 .snapshot .withheldmsg{font-size:14.5px;margin:0 0 10px;color:var(--ink)}
 .snapshot .cmeta{font-size:12px;color:var(--faint);margin-bottom:6px}
 .snapshot .cmeta a{color:var(--faint)}
 .snapshot .pair{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
-  border-top:1px solid var(--line);padding-top:11px;margin-top:10px}
+  border-top:1px solid var(--line);padding-top:9px;margin-top:8px}
 .snapshot .plab{display:block;font-family:var(--mono);font-size:10px;
   text-transform:uppercase;letter-spacing:.1em;color:var(--faint);margin-bottom:3px}
 .snapshot .pair p{margin:0;font-size:13px;line-height:1.55;color:var(--mut)}
