@@ -20,6 +20,15 @@ def test_health_ok():
     assert r.json()["status"] == "ok"
 
 
+def test_health_reports_build_identity():
+    # /health is how a deploy is confirmed, so the keys must always be present:
+    # a missing key reads as "old image" and would send an operator debugging a
+    # deploy that worked. Unstamped outside a built image, hence "unknown" here.
+    body = client.get("/health").json()
+    assert body["commit"] == "unknown"
+    assert body["built"] == "unknown"
+
+
 def test_small_beta_matrix_is_inline():
     # a tiny beta-matrix takes the inline path (light); returns HTML or a no-findings json
     beta = "probe,S1\ncg00000029,0.55\ncg00000109,0.72\n"

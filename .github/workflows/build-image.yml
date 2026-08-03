@@ -30,6 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # stamped into the image and reported by /health. github.sha is the commit
+      # being built; the timestamp is generated here rather than taken from the
+      # commit so a workflow_dispatch re-run of an unchanged commit is still
+      # distinguishable from the image it replaced.
+      - name: Record build identity
+        id: build_id
+        run: echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Log in to the registry
         uses: docker/login-action@v3
         with:
@@ -45,6 +53,12 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}
+          # build identity -> ENV in the image -> /health. Safe as build-args
+          # (unlike the token below): a commit hash and a timestamp are not
+          # secret, and being recorded in the layer history is the point.
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.build_id.outputs.time }}
           # private sibling repos need read auth during pip install — passed as a
           # BuildKit SECRET (never a build-arg: a build-arg's value is recorded in
           # the image's layer history and would leak once the image is public).

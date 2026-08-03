@@ -34,6 +34,15 @@ RUN --mount=type=secret,id=git_token \
       pip install --no-cache-dir ".[web]"; \
       rm -rf /tmp/gitcfg'
 
+# Build identity, surfaced by /health so a deploy can be confirmed with one
+# request. Declared AFTER the pip install on purpose: BUILD_TIME changes on every
+# build, so an ARG placed above would invalidate the install layer and force a
+# full dependency rebuild on each workflow_dispatch re-run of the same commit.
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+ENV DNAREPORT_COMMIT=$GIT_COMMIT \
+    DNAREPORT_BUILD_TIME=$BUILD_TIME
+
 EXPOSE 8000
 # the light front door; heavy work is enqueued to workers, so 2 workers is plenty.
 # Port 8000 matches the cloudflared tunnel ingress target (service: http://app:8000).

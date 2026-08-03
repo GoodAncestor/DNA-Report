@@ -60,6 +60,12 @@ from .uploads import (UploadError, ACCEPTED_FORMATS, stream_to_disk, unwrap_arch
 RESULT_DIR = os.environ.get("DNAREPORT_RESULT_DIR", tempfile.gettempdir())
 QUEUE_URL = os.environ.get("DNAREPORT_QUEUE_URL")
 ENQUEUE_TOKEN = os.environ.get("ENQUEUE_TOKEN")
+# Build identity, stamped into the image by the build-image workflow. __version__
+# is the package version and moves maybe twice a year, so it cannot tell a fresh
+# container from one still serving the previous image — after a deploy, only the
+# commit distinguishes them. Unset outside a built image (local dev, tests).
+BUILD_COMMIT = os.environ.get("DNAREPORT_COMMIT") or "unknown"
+BUILD_TIME = os.environ.get("DNAREPORT_BUILD_TIME") or "unknown"
 # R2 results bucket: worker-produced reports land here (a worker runs on a
 # different machine than the app, so R2 is the shared substrate). The app reads
 # from it to serve /result. Only the trusted app holds these read creds — worker
@@ -418,8 +424,11 @@ def demo(kind: str, format: str = "", accept: str = Header(default=""),
 @app.get("/health")
 def health():
     """Liveness + what this instance can actually do, so an operator can tell a
-    standalone box from a queue-backed one without reading its env."""
-    return {"status": "ok", "version": __version__, "queue": queue_enabled(),
+    standalone box from a queue-backed one without reading its env — and which
+    build it is running, so a deploy can be confirmed with one request instead of
+    grepping a rendered report for markers."""
+    return {"status": "ok", "version": __version__, "commit": BUILD_COMMIT,
+            "built": BUILD_TIME, "queue": queue_enabled(),
             "json_api": bool(API_KEY), "demos": sorted(list(_DEMOS) + ["combined"])}
 
 
