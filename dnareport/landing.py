@@ -23,7 +23,7 @@ from __future__ import annotations
 import json as _json
 
 from . import __version__
-from .uploads import MAX_UPLOAD_BYTES, ACCEPTED_FORMATS
+from .uploads import MAX_UPLOAD_BYTES, ACCEPTED_FORMATS, INLINE_R2_MAX
 
 TISSUES = ["blood", "saliva", "buccal", "other"]
 
@@ -738,6 +738,70 @@ _LANDING_TEMPLATE = """<!doctype html>
  // queues a file that would have run instantly.
  const INLINE_MAX = __INLINE_MAX__;
 
+ // Compressed files cannot cross the front door at all: the edge inspects
+ // request bodies and refuses what it cannot parse, which is every zip and every
+ // gzip. That is the COMMON case — 23andMe, AncestryDNA, MyHeritage and FTDNA all
+ // hand the user a zip — so it gets the direct-to-storage path rather than the
+ // queue, and still returns a report immediately. Ceiling substituted from the
+ // server's own so the two cannot disagree about what fits.
+ const COMPRESSED = /\\.(gz|zip)$/i;
+ const INLINE_R2_MAX = __INLINE_R2_MAX__;
+
+ // Straight to object storage, then ask the server to analyse what landed. The
+ // bytes never touch the front door; only a small JSON naming the object does,
+ // which is the part inspection can actually read. No queue and no claim link —
+ // a consumer export interprets in seconds, and the common case should not pay
+ // for the rare one.
+ async function runDirectUpload(file){
+   try{
+     setOverlay('Preparing upload\\u2026');
+     const signResp = await fetch('/upload/sign',{method:'POST',
+       headers:{'content-type':'application/json','X-Error-Format':'json'},
+       body:JSON.stringify({filename:file.name,size:file.size})});
+     if(signResp.status===413){            // too big for the instant path
+       return await runLargeUpload(file);
+     }
+     if(!signResp.ok){
+       const j=await signResp.json().catch(()=>null);
+       hideOverlay(); statusEl.textContent=''; go.disabled=false;
+       showFail((j&&j.error)||transportError(signResp));
+       return false;
+     }
+     const sign=await signResp.json();
+
+     setOverlay('Uploading\\u2026');
+     const put=await fetch(sign.url,{method:'PUT',body:file});
+     if(!put.ok) throw new Error('the storage upload was rejected (HTTP '+put.status+')');
+
+     setOverlay('Generating your report\\u2026');
+     statusEl.textContent='Analyzing\\u2026 this runs on the server and may take a moment.';
+     const r=await fetch('/analyze/r2',{method:'POST',
+       headers:{'content-type':'application/json','Accept':'text/html',
+                'X-Error-Format':'json'},
+       body:JSON.stringify({key:sign.key,tissue:tissue.value||''})});
+     const ct=r.headers.get('content-type')||'';
+     // same rule as the inline path: only a SUCCESSFUL html response may replace
+     // this page, so an edge error page can never be grafted in as a report
+     if(r.ok&&ct.includes('text/html')){ showReport(await r.text()); return true; }
+     let err=null;
+     if(ct.includes('application/json')){
+       const j=await r.json().catch(()=>null);
+       if(j) err=j.error||{code:'error',title:'That upload did not go through',
+                           message:j.detail||''};
+     }
+     hideOverlay(); statusEl.textContent=''; go.disabled=false;
+     showFail(err||transportError(r));
+     return false;
+   }catch(err){
+     hideOverlay(); statusEl.textContent=''; go.disabled=false;
+     showFail({code:'direct_upload_failed',
+       title:'The upload did not finish',
+       message:String((err&&err.message)||err),
+       hint:'Nothing was analysed and nothing was stored, so trying again is safe.'});
+     return false;
+   }
+ }
+
  async function runLargeUpload(file){
    try{
      const jobId=await largeUpload(file);
@@ -764,6 +828,10 @@ _LANDING_TEMPLATE = """<!doctype html>
    showOverlay();
 
    if(ALWAYS_HEAVY.test(chosen.name)){ await runLargeUpload(chosen); return; }
+   // Compressed: the front door cannot accept it whatever its size, so it goes
+   // to storage directly. Under the analysis ceiling this still returns a report
+   // in the same interaction; above it, runDirectUpload hands off to the queue.
+   if(COMPRESSED.test(chosen.name)){ await runDirectUpload(chosen); return; }
    // Too big to survive the edge: go straight to the parts upload rather than
    // spending the user's bandwidth on a POST that cannot be accepted.
    if(chosen.size>INLINE_MAX){ await runLargeUpload(chosen); return; }
@@ -828,4 +896,5 @@ _LANDING_TEMPLATE = """<!doctype html>
 LANDING_HTML = (_LANDING_TEMPLATE
                 .replace("__VERSION__", __version__)
                 .replace("__INLINE_MAX__", str(MAX_UPLOAD_BYTES))
+                .replace("__INLINE_R2_MAX__", str(INLINE_R2_MAX))
                 .replace("__ACCEPTED_FORMATS__", _json.dumps(ACCEPTED_FORMATS)))

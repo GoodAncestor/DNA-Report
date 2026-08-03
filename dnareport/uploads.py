@@ -53,6 +53,22 @@ import zipfile
 # back to the parts flow rather than dead-ending — but it is still fiction.
 MAX_UPLOAD_BYTES = int(os.environ.get("DNAREPORT_MAX_UPLOAD_BYTES", 180 * 1024 * 1024))
 
+# Ceiling for the instant DIRECT-TO-STORAGE path (/upload/sign -> /analyze/r2),
+# measured on the file as uploaded.
+#
+# Unrelated to MAX_UPLOAD_BYTES above: that one exists because the edge caps
+# request bodies, and this path has no request body to cap — the bytes go to R2
+# and never cross the front door. What bounds this instead is what the light app
+# box can interpret while somebody waits. A 23andMe zip is ~6 MB, an AncestryDNA
+# export ~8 MB, a genotype-derived VCF.gz ~40 MB; all decompress to variant counts
+# the inline path already handles. Beyond that it is a different order of work and
+# belongs on the queue.
+#
+# Lives here rather than in web.py so the landing page can import it without a
+# circular import, and so the page's routing threshold is the server's own number
+# rather than a second opinion that can drift.
+INLINE_R2_MAX = int(os.environ.get("DNAREPORT_INLINE_R2_MAX", 64 * 1024 * 1024))
+
 # Shown to the user whenever we could not read a file. Kept in one place so the
 # error page, the API body and the landing-page copy cannot drift apart.
 ACCEPTED_FORMATS = [

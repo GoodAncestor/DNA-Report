@@ -17,6 +17,20 @@ Endpoints:
                                    rendered refusal page unless it sends
                                    X-Error-Format: json (the upload page does, so it
                                    can show the reason in place).
+  POST /upload/sign             -> {filename, size} -> a presigned PUT URL so the
+                                   browser sends the file STRAIGHT to R2. Exists
+                                   because the edge inspects request bodies and
+                                   refuses anything it cannot parse — which is
+                                   every zip and every .gz, i.e. most real
+                                   uploads. The key is minted here, never taken
+                                   from the caller.
+  POST /analyze/r2              -> {key} -> pull that object, detect, run, render,
+                                   return the report, delete the object. The
+                                   INSTANT path for compressed files: same
+                                   pipeline as /analyze, different source of
+                                   bytes, and deliberately no queue — a consumer
+                                   export interprets in seconds and does not need
+                                   a claim link.
   GET  /result/{job_id}         -> serve a finished report (202 + waiting page while
                                    the worker is still running it).
   GET  /disclaimer              -> the single canonical product disclaimer.
@@ -54,8 +68,8 @@ from .tissue import infer_tissue
 from .landing import LANDING_HTML
 from .serialize import result_to_json
 from . import pages
-from .uploads import (UploadError, ACCEPTED_FORMATS, stream_to_disk, unwrap_archive,
-                      sanitize_note)
+from .uploads import (UploadError, ACCEPTED_FORMATS, INLINE_R2_MAX, stream_to_disk,
+                      unwrap_archive, sanitize_note)
 
 RESULT_DIR = os.environ.get("DNAREPORT_RESULT_DIR", tempfile.gettempdir())
 QUEUE_URL = os.environ.get("DNAREPORT_QUEUE_URL")
@@ -73,6 +87,27 @@ BUILD_TIME = os.environ.get("DNAREPORT_BUILD_TIME") or "unknown"
 # (the inline /analyze path writes to RESULT_DIR on the same box).
 R2_RESULTS_BUCKET = os.environ.get("R2_RESULTS_BUCKET", "dna-report-results")
 R2_ENDPOINT = os.environ.get("R2_ENDPOINT")
+R2_INCOMING_BUCKET = os.environ.get("R2_BUCKET", "dna-report-incoming")
+
+
+# Objects for this path land under their own prefix, kept separate from the
+# queue's `incoming/`: different lifetimes (deleted the moment analysis returns
+# rather than when a worker pulls them), and it keeps /analyze/r2 unable to name
+# an object belonging to the queued flow.
+R2_INLINE_PREFIX = "inline/"
+
+
+def _r2_client():
+    """S3 client configured for R2.
+
+    region_name='auto' and s3v4 are both required: without them a presigned URL
+    is minted happily and then rejected with 401 at PUT time, which reads as a
+    credentials problem and is not one. Measured 2026-08-03.
+    """
+    import boto3
+    from botocore.config import Config
+    return boto3.client("s3", endpoint_url=R2_ENDPOINT, region_name="auto",
+                        config=Config(signature_version="s3v4"))
 
 def _r2_result_html(job_id: str) -> str | None:
     """Fetch a worker-produced report from the R2 results bucket, or None if it
@@ -235,6 +270,36 @@ def _render_full(result, out_path: str) -> str:
             body = top + body
         Path(out_path).write_text(body)
     return out_path
+
+
+def _client_key(request) -> str:
+    """Rate-limit bucket for an unauthenticated caller.
+
+    Behind Cloudflare every request arrives from an edge address, so
+    request.client.host would put the whole internet in one bucket and let a
+    single caller exhaust everyone's allowance. CF-Connecting-IP is the real
+    client and is set by the edge, which is also why it is only trustworthy
+    while the app is only reachable through it.
+    """
+    return (request.headers.get("cf-connecting-ip")
+            or getattr(getattr(request, "client", None), "host", "")
+            or "anon")
+
+
+# Extensions with a parser behind them. The landing page applies the same list
+# before uploading so nobody spends hours sending a file we would refuse; this is
+# the server-side half, because a client-side gate is a courtesy and not a
+# control. Compression suffixes are stripped first — a .vcf.gz is a .vcf.
+_SUPPORTED_EXT = {"txt", "csv", "tsv", "vcf", "bed", "bedmethyl", "idat",
+                  "bam", "modbam", "zip"}
+
+
+def _extension_supported(filename: str) -> bool:
+    name = str(filename).lower()
+    if name.endswith(".gz"):
+        name = name[:-3]
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    return ext in _SUPPORTED_EXT
 
 
 def _check_api_key(x_api_key: str, key_q: str):
@@ -419,6 +484,120 @@ def demo(kind: str, format: str = "", accept: str = Header(default=""),
         return resp.body.decode("utf-8") if hasattr(resp, "body") else Path(
             resp).read_text()
     return HTMLResponse(_cached_demo_html(f"kind:{kind}", _render))
+
+
+@app.post("/upload/sign")
+async def upload_sign(request: Request):
+    """Mint a presigned PUT so the browser can send a file straight to R2.
+
+    Compressed uploads cannot reach the analyser through the front door — the
+    edge inspects request bodies and refuses content it cannot parse, which is
+    every zip and every .gz. That is the majority of real uploads: 23andMe,
+    AncestryDNA, MyHeritage and FTDNA all hand the user a zip.
+
+    So the bytes go to object storage directly and the front door carries only
+    small JSON, which is the part where inspection is meaningful. The upload is
+    not exempted from anything; it stops travelling through a hop that was never
+    able to read it.
+
+    The URL is bound by the signature to one bucket, one key, PUT, and a short
+    expiry. The key is generated HERE, never taken from the caller, so this
+    cannot be steered at an object it did not create.
+    """
+    _rate_limit(_client_key(request))
+    body = await request.json()
+    filename = str(body.get("filename") or "upload")
+    try:
+        size = int(body.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+
+    ext_ok = _extension_supported(filename)
+    if not ext_ok:
+        raise UploadError(
+            "unsupported_format", "We do not have a parser for this kind of file",
+            f"Nothing in this analyser reads {os.path.splitext(filename)[1] or 'that'} "
+            "files, so uploading it could not produce a report.",
+            hint="Checked before the upload rather than after it.",
+            status=415, accepted=True)
+    if size > INLINE_R2_MAX:
+        raise UploadError(
+            "needs_large_file_upload", "That file goes through the large-file upload",
+            f"This upload is {size / (1024*1024):.0f} MB; the instant path accepts up "
+            f"to {INLINE_R2_MAX // (1024*1024)} MB.",
+            hint="Use the large-file upload, which streams the file in parts and "
+                 "hands you a link you can bookmark while it runs.",
+            status=413)
+    if not R2_ENDPOINT:
+        raise UploadError(
+            "no_object_store", "This instance cannot accept uploads that way",
+            "Direct-to-storage upload is not configured on this deployment.",
+            hint="A standalone instance without R2 accepts small uncompressed "
+                 "files through the ordinary upload instead.",
+            status=503)
+
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(filename))[:120] or "upload"
+    key = f"{R2_INLINE_PREFIX}{uuid.uuid4().hex}/{safe}"
+    url = _r2_client().generate_presigned_url(
+        "put_object", Params={"Bucket": R2_INCOMING_BUCKET, "Key": key},
+        ExpiresIn=900)
+    return {"key": key, "url": url, "expires_in": 900}
+
+
+@app.post("/analyze/r2")
+async def analyze_r2(request: Request):
+    """Analyse an object the browser just PUT to R2, and answer with the report.
+
+    This is the instant path for compressed files: same detection, same tiering,
+    same renderer as /analyze — the only difference is where the bytes came from.
+    It deliberately does NOT enqueue: the common upload is a consumer export that
+    interprets in seconds, and handing someone a claim link for that would trade
+    the good experience for a worker dependency it does not need.
+
+    The object is deleted as soon as it has been read, whatever the outcome. The
+    reports promise the upload does not outlive the request, and an object left
+    behind after a failed parse would quietly break that.
+    """
+    _rate_limit(_client_key(request))
+    body = await request.json()
+    key = str(body.get("key") or "")
+    tissue = str(body.get("tissue") or "")
+
+    # only keys this service minted: our prefix, and no traversal out of it
+    if not key.startswith(R2_INLINE_PREFIX) or ".." in key:
+        raise HTTPException(status_code=400, detail="unknown object")
+    if not R2_ENDPOINT:
+        raise HTTPException(status_code=503, detail="object store not configured")
+
+    s3 = _r2_client()
+    try:
+        head = s3.head_object(Bucket=R2_INCOMING_BUCKET, Key=key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="upload not found")
+    # trust the object, not the caller's earlier claim about it: the size was
+    # checked at signing time against a number the client supplied, and nothing
+    # stopped it PUTting something else.
+    if head.get("ContentLength", 0) > INLINE_R2_MAX:
+        s3.delete_object(Bucket=R2_INCOMING_BUCKET, Key=key)
+        raise UploadError(
+            "needs_large_file_upload", "That file goes through the large-file upload",
+            "The uploaded object is larger than the instant path accepts.",
+            hint="Use the large-file upload instead.", status=413)
+
+    scratch = tempfile.mkdtemp(prefix="dnr-r2-")
+    local = os.path.join(scratch, os.path.basename(key))
+    try:
+        s3.download_file(R2_INCOMING_BUCKET, key, local)
+        local = unwrap_archive(local, scratch)
+        return _run_and_respond(local, tissue, filename=os.path.basename(key))
+    finally:
+        # the object goes whether or not the analysis worked
+        try:
+            s3.delete_object(Bucket=R2_INCOMING_BUCKET, Key=key)
+        except Exception as exc:
+            print(f"R2 inline cleanup FAILED for {key}: {type(exc).__name__}: {exc}",
+                  file=sys.stderr, flush=True)
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 @app.get("/health")
