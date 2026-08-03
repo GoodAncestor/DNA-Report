@@ -63,7 +63,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from . import __version__
 from .detect import detect, InputKind
 from .tiering import job_tier, queue_enabled, QUEUED
-from .orchestrate import analyze, compare, render, _marker_url
+from .orchestrate import analyze, compare, render, _marker_url, _scan_stats
 from .tissue import infer_tissue
 from .landing import LANDING_HTML
 from .serialize import result_to_json
@@ -496,6 +496,15 @@ def demo_combined(format: str = "", accept: str = Header(default=""),
         m.findings += g.findings
         m.engines = tuple(dict.fromkeys(list(m.engines) + list(g.engines)))
         m.notes += g.notes
+        # Recompute the scan summary over BOTH halves. Keeping the methylome's
+        # meant the panel described one half of a two-half report — the combined
+        # demo printed "43 markers analysed" above 719 finding badges, and read
+        # identically to the methylome-only demo, which is how a genome that WAS
+        # analysed looked like one that never ran. That panel is the numbers a
+        # reader is most likely to trust, so it has to describe what they are
+        # looking at.
+        m.scan_stats = _scan_stats(blood, m)
+        m.scan_stats["input_bytes"] = (os.path.getsize(blood) + os.path.getsize(genome))
         return m
 
     if _wants_json(accept, format):

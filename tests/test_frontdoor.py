@@ -123,3 +123,34 @@ def test_array_genotype_detected_and_routed():
                        "rs1\t1\t100\tA\tG\n")
     assert detect(p) == InputKind.ARRAY_GENOTYPE
     assert ROUTING[InputKind.ARRAY_GENOTYPE] == ("geneask",)
+
+
+def test_combined_demo_scan_panel_describes_both_halves():
+    """The scan summary must cover the whole report, not one half of it.
+
+    The combined demo kept the methylome analysis's stats after merging in the
+    genome findings, so the panel read identically to the methylome-only demo —
+    "43 markers analysed" printed above a report carrying hundreds more findings
+    than that, and a genome that HAD been analysed looked like one that never
+    ran. Those numbers are the ones a reader is most likely to trust.
+    """
+    import re
+
+    def panel(path):
+        html = client.get(path).text
+        pairs = re.findall(r"<span class='stat-n'>([^<]*)</span>"
+                           r"<span class='stat-l'>([^<]*)</span>", html)
+        return {label: value for value, label in pairs}
+
+    combined, blood = panel("/demo/combined"), panel("/demo/blood")
+    assert combined, "combined demo rendered no scan panel"
+    assert blood, "blood demo rendered no scan panel"
+    # scan_stats is not on the JSON surface, so this asserts on the rendered
+    # panel — which is the thing the reader actually reads anyway
+    assert combined != blood, (
+        "the combined report's scan panel is identical to the methylome-only "
+        f"one, so the genome half is not represented: {combined}")
+    # specifically: the merged report counts more than the methylome alone.
+    # Deliberately NOT asserted on "Your file" — that value is human-rounded, and
+    # a 573-byte demo genome added to a 25 KB methylome still prints "25 KB".
+    assert int(combined["Findings"]) > int(blood["Findings"])
