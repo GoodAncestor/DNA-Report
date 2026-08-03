@@ -16,6 +16,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch: {}
+  # bio-core / MethylAsk / GeneAsk are resolved from their main at pip-install
+  # time during this build, so a change to any of them alters the image without
+  # touching this repo — and nothing here would rebuild. The engine repos
+  # dispatch on push to main to close that.
+  #
+  # NOTHING below reads github.event.client_payload; the build resolves each dep
+  # from main regardless, so a dispatch can only cause a rebuild, never steer it.
+  repository_dispatch:
+    types: [engine-updated]
 
 env:
   REGISTRY: ghcr.io
