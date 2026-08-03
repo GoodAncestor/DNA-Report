@@ -40,7 +40,7 @@ queue backend the /enqueue path is disabled and only inline analysis runs, so th
 app degrades to a standalone analyzer.
 """
 from __future__ import annotations
-import os, re, json, uuid, shutil, tempfile, html as _html
+import os, re, sys, json, uuid, shutil, tempfile, html as _html
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
@@ -78,7 +78,17 @@ def _r2_result_html(job_id: str) -> str | None:
         s3 = boto3.client("s3", endpoint_url=R2_ENDPOINT)   # creds from env
         obj = s3.get_object(Bucket=R2_RESULTS_BUCKET, Key=f"{job_id}.html")
         return obj["Body"].read().decode("utf-8", "replace")
-    except Exception:
+    except Exception as e:
+        # "not there yet" is the normal case while a worker is still running the
+        # job — stay quiet for it. ANYTHING else (no boto3, bad creds, wrong
+        # bucket) is a misconfiguration, and the caller turns None into a 202
+        # "still processing" page — so a broken read path looks exactly like a
+        # slow job and hides indefinitely. Swallowing this silently is what let a
+        # missing boto3 dependency survive to the first real end-to-end test.
+        code = getattr(e, "response", {}).get("Error", {}).get("Code", "")
+        if code not in ("NoSuchKey", "404"):
+            print(f"R2 result read FAILED for {job_id}: {type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
         return None
 # API key for the JSON surface. Must be set explicitly via the DNAREPORT_API_KEY
 # env var — there is deliberately NO default, so a public clone ships no working

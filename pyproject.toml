@@ -18,7 +18,10 @@ dna-report = "dnareport.cli:main"
 
 [project.optional-dependencies]
 # the HTTP front door Cloudflare fronts (see dnareport/web.py). CLI stays dep-light.
-web = ["fastapi", "uvicorn[standard]", "python-multipart", "redis"]
+# boto3: the app READS worker-produced reports out of the R2 results bucket to
+# serve /result (see web.py::_r2_result_html). Without it that import raises and
+# every finished async report renders as a permanent "still processing" page.
+web = ["fastapi", "uvicorn[standard]", "python-multipart", "redis", "boto3"]
 
 [build-system]
 requires = ["setuptools>=61"]
