@@ -280,10 +280,20 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     # opt-in, per-report capped, disk-cached — no-op unless ALPHA_GENOME_KEY +
     # ALPHAGENOME_ENABLED are set (the license constraint travels with the key).
     try:
-        from geneask.annotators.alphagenome_vep import annotate_findings as _ag
-        agn = _ag(findings)
+        from geneask.annotators.alphagenome_vep import (annotate_findings as _ag,
+                                                        default_pacing as _ag_pacing)
+        # AlphaGenome publishes no quota — their stated advice is to increase load
+        # until RESOURCE_EXHAUSTED — so there is no daily number to budget against.
+        # Pace, bound the wait, and report honestly when a run was cut short.
+        agp = _ag_pacing()
+        agn = _ag(findings, pacing=agp)
         if agn:
             notes.append(f"AlphaGenome: predicted regulatory effect for {agn} uncertain variants")
+        if agp.halted:
+            notes.append("AlphaGenome: quota exhausted upstream; remaining variants were not scored")
+        elif agp.deadline is not None and agp.deadline.expired():
+            notes.append("AlphaGenome: stopped at this report's time budget; "
+                         "remaining uncertain variants were not scored")
     except Exception:
         pass
 
@@ -293,20 +303,21 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     try:
         from geneask.annotators.gnomad_freq import (annotate_findings as _gnomad,
                                                     default_budget as _gnomad_budget)
-        # Capped per report: gnomAD is someone else's rate-limited API and this
-        # endpoint is public, so a rare-variant-heavy genome must not be able to
-        # spend an unbounded number of their requests. Say so in the notes when a
-        # report hits the cap — a silently truncated enrichment reads as "this
-        # variant isn't in gnomAD", which is a different and wrong claim.
+        # Paced, not capped: gnomAD publishes 30 requests/minute per IP and no
+        # daily quota, so a report may make as many lookups as it needs at that
+        # rate. What is bounded is how long ONE report waits for it — a latency
+        # decision. Either way, say so in the notes when lookups were skipped: a
+        # silently truncated enrichment reads as "this variant isn't in gnomAD",
+        # which is a different and stronger claim than "we didn't look".
         budget = _gnomad_budget()
         got = _gnomad(findings, budget=budget)
         if got:
             notes.append(f"gnomAD: added population frequency to {got} variant findings")
         if budget.halted:
             notes.append("gnomAD: rate-limited by the API; some frequencies were not looked up")
-        elif budget.remaining == 0 and budget.spent:
-            notes.append(f"gnomAD: stopped at this report's {budget.spent}-lookup cap; "
-                         "uncached variants were left un-annotated")
+        elif budget.deadline is not None and budget.deadline.expired():
+            notes.append(f"gnomAD: made {budget.spent} lookups within this report's time "
+                         "budget; uncached variants were left un-annotated")
     except Exception:
         pass
 

@@ -22,6 +22,13 @@ dna-report = "dnareport.cli:main"
 # serve /result (see web.py::_r2_result_html). Without it that import raises and
 # every finished async report renders as a permanent "still processing" page.
 web = ["fastapi", "uvicorn[standard]", "python-multipart", "redis", "boto3"]
+# The suite, declared rather than assembled ad hoc in CI. httpx2 is what
+# starlette's TestClient requires — current starlette raises outright without it,
+# and a dev venv carrying the older httpx runs the tests down a deprecated path
+# instead, so this was invisible locally and only surfaced when CI installed
+# clean. pytest is here for the same reason: a test dependency the workflow knows
+# about but the project does not is a dependency waiting to drift.
+test = ["pytest", "httpx2"]
 
 [build-system]
 requires = ["setuptools>=61"]
