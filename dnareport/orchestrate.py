@@ -289,7 +289,10 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
         agn = _ag(findings, pacing=agp)
         if agn:
             notes.append(f"AlphaGenome: predicted regulatory effect for {agn} uncertain variants")
-        if agp.halted:
+        if agp.client_missing:
+            notes.append("AlphaGenome: enabled but its client library is not installed on this "
+                         "server, so nothing was scored — a deployment fault, not a result")
+        elif agp.halted:
             notes.append("AlphaGenome: quota exhausted upstream; remaining variants were not scored")
         elif agp.deadline is not None and agp.deadline.expired():
             notes.append("AlphaGenome: stopped at this report's time budget; "
