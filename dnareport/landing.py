@@ -267,7 +267,7 @@ _LANDING_TEMPLATE = """<!doctype html>
      <ul>
        <li>Processed on the server, shared with no one.</li>
        <li>Deleted after the report is produced.</li>
-       <li>No third-party fonts, scripts, or trackers on this page.</li>
+       <li>No third-party scripts or trackers on this page.</li>
      </ul>
    </div>
   </aside>
