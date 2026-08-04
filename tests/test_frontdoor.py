@@ -159,3 +159,17 @@ def test_combined_demo_scan_panel_describes_both_halves():
     # Deliberately NOT asserted on "Your file" — that value is human-rounded, and
     # a 573-byte demo genome added to a 25 KB methylome still prints "25 KB".
     assert int(combined["Findings"]) > int(blood["Findings"])
+
+
+def test_genome_demo_is_served_and_listed():
+    """The bundled genome demo carries variants whose ClinVar submitters disagree,
+    because that is the only class of finding the regulatory-VEP enrichment can
+    reach: screen_findings admits a variant only when its significance string
+    contains "pathogenic", so plain "Uncertain significance" never becomes a
+    finding and never reaches AlphaGenome. Without this profile there was nothing
+    on the live site that exercised the feature at all."""
+    r = client.get("/demo/genome")
+    assert r.status_code == 200
+    assert "class='mod mod-genome'" in r.text
+    assert "/demo/genome" in client.get("/").text          # reachable from the landing page
+    assert "genome" in client.get("/health").json()["demos"]

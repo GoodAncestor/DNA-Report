@@ -290,8 +290,13 @@ _LANDING_TEMPLATE = """<!doctype html>
        <div class="t">Methylome + genome</div>
        <div class="d">Two file types merged into a single report, each finding tagged
          with its source.</div></a>
+     <a class="specimen demo-link" href="/demo/genome">
+       <div class="no">SPECIMEN 04</div>
+       <div class="t">Genome, unsettled variants</div>
+       <div class="d">Variants whose ClinVar submitters disagree. Shows the AlphaGenome
+         regulatory prediction and the Predictions filter.</div></a>
    </div>
-   <p class="hint">All three are real public profiles. The buccal one is included on
+   <p class="hint">All four are real public profiles. The buccal one is included on
      purpose: it shows the report marking clocks that are not valid for a given sample
      type, instead of printing a confident but misleading number.</p>
  </section>

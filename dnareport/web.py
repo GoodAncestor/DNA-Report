@@ -186,6 +186,11 @@ _DEMOS = {
     "blood":  ("demo_blood_wholeblood.csv", "blood",
                "Whole-blood methylation profile from a healthy adult (public GEO "
                "sample, chronological age 62). All clocks are valid for blood."),
+    "genome": ("demo_genome_conflicting.vcf", "",
+               "Whole-genome variant calls carrying ClinVar entries the submitters "
+               "disagree about. These are the variants a catalogue cannot settle, "
+               "so this is the profile where the AlphaGenome regulatory prediction "
+               "and the Predictions filter appear."),
     "buccal": ("demo_buccal_pediatric.csv", "buccal",
                "Buccal (cheek-swab) profile from a children's research cohort. "
                "Shown to demonstrate tissue-mismatch flagging: blood-trained clocks "
