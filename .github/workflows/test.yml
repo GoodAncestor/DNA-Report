@@ -1,0 +1,56 @@
+# Run the test suite — on this repo's own pushes AND on every engine change.
+#
+# Why the engine trigger matters as much as the push one: biocore, methylask and
+# geneask are resolved from `main` at install time, so a change in any of them
+# alters this app without touching this repo. That is already why `build-image`
+# listens for `engine-updated`. Until this workflow existed, that dispatch built
+# and published an image from code nothing had run a test against.
+#
+# Deploys here are user-visible downtime (the cloudflared sidecar is recreated
+# with the app) and the recovery for a bad image is another deploy, so the cheap
+# place to catch a break is here rather than on the box. `build-image` calls this
+# via workflow_call and will not publish if it fails — one definition of the
+# suite, run once per build rather than duplicated into both workflows.
+#
+# No step interpolates event data into a shell command — every trigger below
+# carries attacker-influencable text (branch names, commit messages, dispatch
+# payloads), and the only safe amount of that in a `run:` block is none.
+name: test
+on:
+  pull_request: {}
+  workflow_dispatch: {}
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'    # matches the runtime image
+
+      # bcftools: GeneAsk's rsid trait screen shells out to it, same as the
+      # Dockerfile installs. Without it those tests fail for a reason that has
+      # nothing to do with the change under test.
+      - name: System dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bcftools
+
+      # A REAL install of the package and its git-source engine deps, not a
+      # PYTHONPATH trick. The two failures this workflow was written after were
+      # both environment drift rather than logic — a dev venv missing pyliftover
+      # made every build-37 upload silently match nothing, and read as a code
+      # bug. Only a clean install from the declared dependencies catches that.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[web]" pytest
+
+      - name: Run tests
+        run: pytest -q

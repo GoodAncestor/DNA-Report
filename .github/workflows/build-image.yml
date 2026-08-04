@@ -32,7 +32,17 @@ env:
   IMAGE: goodancestor/dna-report   # GHCR requires a lowercase path (owner GoodAncestor -> goodancestor)
 
 jobs:
+  # The suite lives in test.yml and is called from here, so there is one
+  # definition of it and it runs once per build rather than twice.
+  test:
+    uses: ./.github/workflows/test.yml
+
   build:
+    # A red suite must not produce a deployable image. This matters most for the
+    # repository_dispatch path: an engine change rebuilds and republishes :latest
+    # without touching this repo, so before this gate existed a broken engine
+    # commit shipped an image with nothing having run against it.
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
