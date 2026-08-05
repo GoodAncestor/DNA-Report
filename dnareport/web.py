@@ -59,6 +59,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.concurrency import run_in_threadpool
 
 from . import __version__
 from .detect import detect, InputKind
@@ -175,12 +176,46 @@ def _r2_result_html(job_id: str) -> str | None:
             print(f"R2 result read FAILED for {job_id}: {type(e).__name__}: {e}",
                   file=sys.stderr, flush=True)
         return None
-# API key for the JSON surface. Must be set explicitly via the DNAREPORT_API_KEY
+# API keys for the JSON surface. Must be set explicitly via the DNAREPORT_API_KEY
 # env var — there is deliberately NO default, so a public clone ships no working
 # key and the JSON API stays closed until an operator sets one. Interactive HTML
-# needs no key. A real key-management / Cloudflare service-token layer goes over
-# this later (see PRODUCTION_TODO).
+# needs no key.
+#
+# The var holds either a single opaque secret (the original form, still accepted)
+# or a comma-separated list of `label:secret` pairs. Labels exist so that usage
+# and rate limits are attributable to a consumer and one can be revoked without
+# re-issuing everyone else's — enough tenancy for a handful of partners, with no
+# database and no dashboard to run. Past that many, this wants a real key store.
+_LABEL_RE = re.compile(r"^([A-Za-z0-9_.-]{1,32}):(.+)$", re.S)
+
+
+def _parse_api_keys(raw: str) -> dict:
+    """Map secret -> label. A part is only read as labelled when it matches the
+    conservative label pattern; a bare secret that happens to contain a colon
+    (generated secrets often do) stays one secret rather than being silently
+    split into a label and a shorter one."""
+    keys = {}
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = _LABEL_RE.match(part)
+        if m:
+            keys[m.group(2).strip()] = m.group(1)
+        else:
+            keys[part] = "default"
+    return keys
+
+
+API_KEYS = _parse_api_keys(os.environ.get("DNAREPORT_API_KEY", ""))
+# Kept so `/health` and anything else asking "is the JSON API on?" reads the same
+# as it did before labels existed.
 API_KEY = os.environ.get("DNAREPORT_API_KEY")
+
+
+def _resolve_key(secret: str):
+    """The label this secret belongs to, or None if it is not a key we issued."""
+    return API_KEYS.get(secret) if secret else None
 _DEMO_DIR = Path(__file__).parent / "demo_data"
 _DEMOS = {
     "blood":  ("demo_blood_wholeblood.csv", "blood",
@@ -236,6 +271,8 @@ async def _upload_error(request: Request, exc: UploadError):
     # response is still the rendered report rather than the key-gated JSON API.
     # Without this signal the app served itself a refusal page it then discarded,
     # showing "The server answered with HTTP 415" instead of the reason.
+    _count(f"status:{exc.status}")
+    _count(f"refusal:{exc.code}")
     if request.headers.get("x-error-format", "").lower() == "json":
         return JSONResponse(exc.body(), status_code=exc.status)
     accept = request.headers.get("accept", "")
@@ -252,6 +289,7 @@ async def _upload_error(request: Request, exc: UploadError):
 # The app is a single instance behind the tunnel, so an in-process limiter is
 # sufficient; a Redis-backed limiter is the productization step (PRODUCTION_TODO).
 import time as _time
+import threading as _threading
 _RATE_MAX = int(os.environ.get("DNAREPORT_RATE_MAX", "60"))        # tokens
 _RATE_WINDOW = float(os.environ.get("DNAREPORT_RATE_WINDOW", "60"))  # seconds
 _rate_state: dict[str, list] = {}   # key -> [tokens, last_refill_ts]
@@ -264,8 +302,99 @@ def _rate_limit(key: str):
     tokens, last = _rate_state.get(key, [_RATE_MAX, now])
     tokens = min(_RATE_MAX, tokens + (now - last) * (_RATE_MAX / _RATE_WINDOW))
     if tokens < 1:
+        _count("status:429")
         raise HTTPException(status_code=429, detail="rate limit exceeded; slow down")
     _rate_state[key] = [tokens - 1, now]
+
+
+# ---- concurrency guard on analysis -----------------------------------------
+# A rate limit counts requests per minute; it cannot stop N whole-genome analyses
+# from arriving in the same second, and this box is mild-CPU by design. Each
+# inline analysis also occupies one of uvicorn's threadpool slots for its whole
+# runtime, so without a cap enough simultaneous uploads stop the process
+# answering anything at all — including /health, which is what makes an overload
+# look like an outage. Shedding is an explicit 503 + Retry-After so a caller can
+# back off, rather than a connection that hangs until the edge times it out.
+class _Inflight:
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.count = 0
+        self._lock = _threading.Lock()
+
+    def reset(self):
+        with self._lock:
+            self.count = 0
+            self.limit = int(os.environ.get("DNAREPORT_MAX_CONCURRENT", "4"))
+
+    def __enter__(self):
+        with self._lock:
+            if self.count >= self.limit:
+                _count("shed:busy")
+                raise HTTPException(
+                    status_code=503,
+                    detail="The analyser is busy — too many reports are running "
+                           "right now. Try again in a moment.",
+                    headers={"Retry-After": "30"})
+            self.count += 1
+        return self
+
+    def __exit__(self, *exc):
+        with self._lock:
+            self.count = max(0, self.count - 1)
+        return False
+
+
+_inflight = _Inflight(int(os.environ.get("DNAREPORT_MAX_CONCURRENT", "4")))
+
+
+# ---- counters ---------------------------------------------------------------
+# Deliberately not a metrics library: a flat counter map, readable as JSON, is
+# enough to answer "is someone hammering us" and costs nothing to scrape.
+#
+# SCOPE MATTERS. The container runs more than one uvicorn worker, so process-local
+# counters would give a scraper a different answer depending on which worker
+# answered, and a threshold alert on numbers that bounce is an alert that cries
+# wolf. When a queue backend is configured the counters live in Redis and are
+# therefore shared and durable across restarts; without one they fall back to
+# this dict and /metrics says so, so nobody builds a trigger on the wrong thing.
+_counters: dict[str, int] = {}
+_counters_lock = _threading.Lock()
+_METRICS_HASH = "dnareport:metrics"
+_STARTED = _time.time()
+
+
+def _count(name: str, n: int = 1):
+    """Increment a counter. Never raises: a metrics failure must not become a
+    request failure — losing a count is acceptable, losing a report is not."""
+    q = None
+    try:
+        q = _queue()
+    except Exception:
+        q = None
+    if q is not None:
+        try:
+            q.hincrby(_METRICS_HASH, name, n)
+            return
+        except Exception:
+            pass       # fall through to the process-local map
+    with _counters_lock:
+        _counters[name] = _counters.get(name, 0) + n
+
+
+def _read_counters():
+    """(counters, scope). 'shared' means Redis-backed and comparable across
+    workers; 'process' means this worker's view only."""
+    try:
+        q = _queue()
+        if q is not None:
+            raw = q.hgetall(_METRICS_HASH)
+            if raw is not None:
+                return ({k.decode() if isinstance(k, bytes) else k:
+                         int(v) for k, v in raw.items()}, "shared")
+    except Exception:
+        pass
+    with _counters_lock:
+        return (dict(_counters), "process")
 
 
 def _queue():
@@ -351,20 +480,26 @@ def _extension_supported(filename: str) -> bool:
     return ext in _SUPPORTED_EXT
 
 
-def _check_api_key(x_api_key: str, key_q: str):
-    """Guard the JSON surface. Fail closed: if no key is configured on the server
-    the JSON API is disabled entirely (503), never open. Otherwise the caller's
-    key must match."""
-    if not API_KEY:
+def _check_api_key(x_api_key: str, key_q: str) -> str:
+    """Guard the JSON surface and return the caller's label. Fail closed: if no
+    key is configured on the server the JSON API is disabled entirely (503),
+    never open. Otherwise the caller's key must be one we issued."""
+    if not API_KEYS:
         raise HTTPException(status_code=503,
                             detail="JSON API is not enabled on this instance "
                                    "(no DNAREPORT_API_KEY configured).")
-    key = (x_api_key or key_q)
-    if key != API_KEY:
+    label = _resolve_key(x_api_key or key_q)
+    if label is None:
+        _count("status:401")
         raise HTTPException(status_code=401,
                             detail="JSON output requires a valid API key "
                                    "(header X-API-Key or ?api_key=).")
-    _rate_limit(key)   # per-key token bucket
+    # Bucket on the LABEL, not the secret, so one tenant burning its allowance
+    # cannot spend another's — a shared bucket would make any consumer a denial
+    # of service on every other consumer.
+    _rate_limit(f"key:{label}")
+    _count(f"key:{label}")
+    return label
 
 
 def _run_and_respond(local, tissue, filename="", *, want_json=False,
@@ -749,6 +884,7 @@ async def analyze_r2(request: Request):
     reports promise the upload does not outlive the request, and an object left
     behind after a failed parse would quietly break that.
     """
+    _count("route:/analyze/r2")
     _rate_limit(_client_key(request))
     body = await _json_body(request)
     key = str(body.get("key") or "")
@@ -778,14 +914,21 @@ async def analyze_r2(request: Request):
     scratch = tempfile.mkdtemp(prefix="dnr-r2-")
     local = os.path.join(scratch, os.path.basename(key))
     try:
-        s3.download_file(R2_INCOMING_BUCKET, key, local)
-        # returns (path, note) — a ZIP is unpacked to its genotype member, a .gz
-        # is passed through because detect and the parsers read gzip directly
-        display = os.path.basename(key)
-        local, unwrapped = unwrap_archive(local, scratch)
-        if unwrapped:
-            display = os.path.basename(local)
-        return _run_and_respond(local, tissue or None, filename=display)
+        # same concurrency cap as /analyze — this path runs the identical
+        # analysis, so leaving it uncapped would move the overload sideways
+        # rather than prevent it
+        with _inflight:
+            s3.download_file(R2_INCOMING_BUCKET, key, local)
+            # returns (path, note) — a ZIP is unpacked to its genotype member, a
+            # .gz is passed through because detect and the parsers read gzip
+            # directly
+            display = os.path.basename(key)
+            local, unwrapped = unwrap_archive(local, scratch)
+            if unwrapped:
+                display = os.path.basename(local)
+            # off the event loop, for the same reason as /analyze above
+            return await run_in_threadpool(_run_and_respond, local,
+                                           tissue or None, filename=display)
     finally:
         # the object goes whether or not the analysis worked
         try:
@@ -804,7 +947,31 @@ def health():
     grepping a rendered report for markers."""
     return {"status": "ok", "version": __version__, "commit": BUILD_COMMIT,
             "built": BUILD_TIME, "queue": queue_enabled(),
-            "json_api": bool(API_KEY), "demos": sorted(list(_DEMOS) + ["combined"])}
+            "json_api": bool(API_KEYS), "demos": sorted(list(_DEMOS) + ["combined"])}
+
+
+@app.get("/metrics")
+def metrics(x_api_key: str = Header(default=""), api_key: str = ""):
+    """Counters, for answering 'is someone hammering us' without SSH.
+
+    Key-gated rather than public: the per-tenant counts say who our consumers
+    are and how much they use, which is not something to publish. It is not
+    Prometheus format — a scraper that can read JSON can read this, and adding
+    an exposition format would be the only reason to take a dependency.
+
+    `scope` says whether the numbers are shared across workers (Redis-backed) or
+    just this process's view. Build a threshold alert on 'process' numbers and it
+    will flap, because consecutive scrapes hit different workers.
+    """
+    _check_api_key(x_api_key, api_key)
+    counters, scope = _read_counters()
+    return {"scope": scope,
+            "uptime_s": round(_time.time() - _STARTED, 1),
+            "inflight": _inflight.count,
+            "inflight_limit": _inflight.limit,
+            "rate_max": _RATE_MAX,
+            "rate_window_s": _RATE_WINDOW,
+            "counters": counters}
 
 
 @app.get("/api/openapi.json")
@@ -832,7 +999,8 @@ def api_docs(x_api_key: str = Header(default=""), api_key: str = ""):
 
 
 @app.post("/analyze")
-async def analyze_inline(file: UploadFile = File(...), tissue: str = Form(default=""),
+async def analyze_inline(request: Request,
+                         file: UploadFile = File(...), tissue: str = Form(default=""),
                          format: str = "", accept: str = Header(default=""),
                          x_api_key: str = Header(default=""), api_key: str = ""):
     """Small inline uploads only. Returns HTML by default, or JSON (key-guarded)
@@ -843,34 +1011,50 @@ async def analyze_inline(file: UploadFile = File(...), tissue: str = Form(defaul
     inside it is what gets analysed. The browser also unwraps before sending —
     this is the backstop for API callers.
     """
-    display = os.path.basename(file.filename or "upload")
-    scratch = tempfile.mkdtemp(prefix="dnr-web-")
-    # The scratch dir holds the caller's raw genotype data and MUST NOT outlive
-    # the request. Every report and refusal page this service prints says the
-    # uploaded file is deleted after processing; without the finally below that
-    # promise was false, and the front door accumulated one directory of
-    # someone's genome per upload, forever. On the archive path both copies are
-    # in here (the original .zip and the member extracted from it).
-    try:
-        # basename() so a crafted filename cannot write outside the scratch dir
-        local = os.path.join(scratch, display)
-        await stream_to_disk(file, local)
+    _count("route:/analyze")
+    # This route was the only expensive one with NO limit of any kind: an
+    # anonymous caller could run the box flat with a loop, and nothing recorded
+    # that it had happened. Keyed callers are bucketed by tenant inside
+    # _check_api_key; anonymous ones are bucketed by their real client IP here.
+    _rate_limit(_client_key(request))
+    # Shed BEFORE reading the body: refusing after streaming 180 MB to disk has
+    # already spent the resource the guard exists to protect.
+    with _inflight:
+        display = os.path.basename(file.filename or "upload")
+        scratch = tempfile.mkdtemp(prefix="dnr-web-")
+        # The scratch dir holds the caller's raw genotype data and MUST NOT outlive
+        # the request. Every report and refusal page this service prints says the
+        # uploaded file is deleted after processing; without the finally below that
+        # promise was false, and the front door accumulated one directory of
+        # someone's genome per upload, forever. On the archive path both copies are
+        # in here (the original .zip and the member extracted from it).
+        try:
+            # basename() so a crafted filename cannot write outside the scratch dir
+            local = os.path.join(scratch, display)
+            await stream_to_disk(file, local)
 
-        local, unwrapped = unwrap_archive(local, scratch)
-        if unwrapped:
-            display = os.path.basename(local)
+            local, unwrapped = unwrap_archive(local, scratch)
+            if unwrapped:
+                display = os.path.basename(local)
 
-        return _run_and_respond(local, tissue or None, filename=display,
-                                want_json=_wants_json(accept, format),
-                                x_api_key=x_api_key, key_q=api_key)
-    except UploadError as exc:
-        # name the file the user actually chose, so the refusal page can show it
-        exc.filename = exc.filename if getattr(exc, "filename", "") else display
-        raise
-    finally:
-        # _run_and_respond has already read the rendered report into the response
-        # body, so nothing here is still needed once the request is answered.
-        shutil.rmtree(scratch, ignore_errors=True)
+            # Off the event loop. Everything below _run_and_respond is
+            # synchronous and can run for minutes on a large array, so calling
+            # it directly from this `async def` blocked the whole worker: one
+            # slow report stopped /health answering, which is why an overloaded
+            # box was indistinguishable from a dead one, and why the concurrency
+            # cap above could never be reached — nothing else got scheduled.
+            return await run_in_threadpool(
+                _run_and_respond, local, tissue or None, filename=display,
+                want_json=_wants_json(accept, format),
+                x_api_key=x_api_key, key_q=api_key)
+        except UploadError as exc:
+            # name the file the user actually chose, so the refusal page can show it
+            exc.filename = exc.filename if getattr(exc, "filename", "") else display
+            raise
+        finally:
+            # _run_and_respond has already read the rendered report into the response
+            # body, so nothing here is still needed once the request is answered.
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 @app.post("/enqueue")
