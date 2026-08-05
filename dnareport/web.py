@@ -259,7 +259,71 @@ _DEMOS = {
 # OpenAPI schema is generated, but /docs and /openapi.json are served behind the
 # API key (see the gated routes below) rather than public — the JSON API is
 # key-guarded, so its documentation is too.
-app = FastAPI(title="DNA-Report", docs_url=None, redoc_url=None, openapi_url=None)
+def _read_report_for_mcp(report_id: str) -> dict:
+    """Give an agent the published JSON for a report, or say why it cannot yet.
+
+    Mirrors what /result answers, in a shape a tool can act on: a definite failure
+    and a job still running are different facts, and an agent that cannot tell
+    them apart will either poll a dead job for ever or give up on a live one.
+    """
+    body = _r2_result_html(report_id, "json")
+    if body is not None:
+        try:
+            return {"status": "ready", "report": json.loads(body)}
+        except ValueError:
+            return {"status": "error",
+                    "detail": "The stored report is not readable as JSON."}
+    error = _job_dead_lettered(report_id)
+    if error:
+        return {"status": "failed", "detail": error,
+                "advice": "This analysis stopped with an error. Uploading the "
+                          "file again is the fastest fix."}
+    waited = _job_waited(report_id)
+    if waited is None:
+        return {"status": "not_found",
+                "detail": "No report with that id. Check the claim link, or the "
+                          "report may have passed its 30-day expiry."}
+    if waited > JOB_OVERDUE_SECONDS:
+        return {"status": "overdue", "waited_seconds": int(waited),
+                "detail": "This job has taken far longer than an analysis should "
+                          "and is unlikely to complete. Stop polling."}
+    return {"status": "working", "waited_seconds": int(waited),
+            "retry_after_seconds": 15,
+            "detail": "The analysis is still running. Poll no faster than "
+                      "retry_after_seconds."}
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app):
+    """The MCP session manager MUST be entered by the HOST app.
+
+    A mounted sub-app's own lifespan never runs, so without this every request to
+    /mcp fails with "Task group is not initialized". Nothing else in this app
+    needs a lifespan, which is exactly why this one is easy to leave out and hard
+    to diagnose afterwards.
+    """
+    if _MCP is None:
+        yield
+        return
+    async with _MCP.session_manager.run():
+        yield
+
+
+_MCP = None
+try:
+    from .mcp_server import build_mcp, mcp_app
+    _MCP = build_mcp(_read_report_for_mcp)
+except Exception as _mcp_exc:      # the app must serve reports without MCP
+    print(f"MCP server not enabled: {type(_mcp_exc).__name__}: {_mcp_exc}",
+          file=sys.stderr, flush=True)
+
+app = FastAPI(title="DNA-Report", docs_url=None, redoc_url=None, openapi_url=None,
+              lifespan=_lifespan)
+if _MCP is not None:
+    # Mounted, not proxied: the SDK owns the protocol envelope (per-request _meta,
+    # resultType, the Mcp-Method/Mcp-Name header rules), and reimplementing any of
+    # that here would be a second, worse implementation of a spec that changes.
+    app.mount("/mcp", mcp_app(_MCP))
 
 # Human-facing names for the detected kinds, so a refusal or an empty result can
 # say "AncestryDNA-style genotype export" instead of "array_genotype".

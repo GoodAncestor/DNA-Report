@@ -26,7 +26,12 @@ dna-report = "dnareport.cli:main"
 # boto3: the app READS worker-produced reports out of the R2 results bucket to
 # serve /result (see web.py::_r2_result_html). Without it that import raises and
 # every finished async report renders as a permanent "still processing" page.
-web = ["fastapi", "uvicorn[standard]", "python-multipart", "redis", "boto3"]
+# mcp: the agent-facing surface mounted at /mcp (see dnareport/mcp_server.py).
+# Pinned to the 2.x line because 2.0 is the rewrite that speaks the
+# 2026-07-28 stateless protocol; the 1.x API (FastMCP, sessions) is a
+# different library wearing the same name and will not import here.
+web = ["fastapi", "uvicorn[standard]", "python-multipart", "redis", "boto3",
+       "mcp>=2.0,<3"]
 # The suite, declared rather than assembled ad hoc in CI. httpx2 is what
 # starlette's TestClient requires — current starlette raises outright without it,
 # and a dev venv carrying the older httpx runs the tests down a deprecated path
