@@ -444,16 +444,29 @@ def _render_full(result, out_path: str) -> str:
 
     body = Path(out_path).read_text()
 
+    def _append(html: str):
+        """Put a section at the end of the document, inside <body>."""
+        nonlocal body
+        if not html:
+            return
+        if "</body>" in body:
+            body = body.replace("</body>", html + "\n</body>", 1)
+        else:
+            body += html
+
+    # What the scan covered and what it left out. The engines have always
+    # produced these notes and the JSON API has always returned them; the HTML
+    # report showed none of them, so a bounded report — 1,000 GWAS associations
+    # of 442,712 — was indistinguishable from a complete one to the only
+    # audience that reads the HTML.
+    from .scan_notes import notes_html
+    _append(notes_html(result))
+
     # Glossary goes at the END, after the findings it explains — the copy is
     # per-trait while findings are per-marker, so it is written once here and
     # each finding links to its entry rather than restating it.
     from .glossary import glossary_html
-    gloss = glossary_html(rest)
-    if gloss:
-        if "</body>" in body:
-            body = body.replace("</body>", gloss + "\n</body>", 1)
-        else:
-            body += gloss
+    _append(glossary_html(rest))
 
     top = highlights_html(result)
     if top:
@@ -462,7 +475,10 @@ def _render_full(result, out_path: str) -> str:
             body = body.replace("<body>", "<body>\n" + top, 1)
         else:
             body = top + body
-        Path(out_path).write_text(body)
+    # Write unconditionally. This used to happen only when there WERE highlights,
+    # so on a report without them the glossary was built and then thrown away —
+    # the caller re-reads this file, and never saw it.
+    Path(out_path).write_text(body)
     return out_path
 
 
