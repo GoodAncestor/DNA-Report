@@ -181,6 +181,11 @@ def mcp_app(mcp):
     stateless_http because the protocol is stateless in this revision and there is
     no reason for an instance to hold anything between calls. json_response
     because nothing here streams — every tool returns a whole answer.
+
+    NOTE the endpoint is `/mcp/`, with the slash. Mounted at /mcp, a request to
+    `/mcp` is answered 307 by the PARENT router before this app is reached, so it
+    cannot be handled here. 307 preserves method and body and every client tested
+    follows it, but the slashed form is the one to publish.
     """
     from mcp.server.transport_security import TransportSecuritySettings
     return mcp.streamable_http_app(

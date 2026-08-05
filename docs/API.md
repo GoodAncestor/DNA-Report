@@ -103,6 +103,30 @@ abuse and answer with a challenge, which a browser can solve and your client
 cannot; it will surface as a `403` that clears on its own a few minutes later.
 Polling every 10 seconds was enough to trigger it in testing.
 
+## For agents: MCP
+
+There is an MCP server at **`https://dna.goodancestor.com/mcp/`** — note the
+trailing slash; `/mcp` answers 307 to it, which a following client handles and a
+non-following one does not. Protocol revision `2026-07-28` (stateless), and no
+authentication: the report id is the capability, exactly as it is for the page.
+
+| Tool | What it does |
+|---|---|
+| `get_report_summary(report_id)` | Counts by tier and topic, databases consulted, the strongest findings, and whether the report is complete. Call this first. |
+| `get_findings(report_id, tier, gene, topic, limit, offset)` | Query the findings. Ordered strongest-evidence-first, paged at 50. |
+
+`report_id` is the 32-hex string from a claim link (`/result/<report_id>`).
+
+**Every findings response carries `bounded` and `limits`.** When `bounded` is
+true the report itself is a truncated view — a consumer array commonly yields
+hundreds of thousands of GWAS associations and the report keeps the strongest
+1,000 — and no amount of paging reaches what was left out. Say so rather than
+presenting the page you have as the whole set.
+
+A report that is not ready answers with a status rather than an empty result:
+`working` (with `retry_after_seconds`), `failed`, `overdue` or `not_found`. Only
+`working` is worth retrying.
+
 ## Two client gotchas
 
 Python's **stdlib `urllib` is blocked at the edge** — its default User-Agent

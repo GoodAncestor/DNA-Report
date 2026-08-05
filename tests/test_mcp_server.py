@@ -201,3 +201,17 @@ def test_a_tool_call_answers_with_structured_content(mcp_client):
     # no such report -> a stated status, never an empty success
     assert result["structuredContent"]["status"] in (
         "not_found", "working", "failed", "overdue")
+
+
+def test_the_slashless_path_redirects_rather_than_failing(mcp_client):
+    """The published endpoint is `/mcp/`. A request to `/mcp` is redirected by the
+    parent router before the mounted app is reached, so it cannot be served
+    directly — but 307 preserves method and body, so a following client still
+    works. Pinned because a 404 or a 405 here would look identical to an outage
+    to anyone who left the slash off."""
+    r = mcp_client.post("/mcp", headers={**_HDRS, "Mcp-Method": "tools/list"},
+                        json={"jsonrpc": "2.0", "id": 9, "method": "tools/list",
+                              "params": {"_meta": _META}},
+                        follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"].endswith("/mcp/")
