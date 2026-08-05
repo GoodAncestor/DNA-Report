@@ -11,7 +11,11 @@ splits it into a methylation stream and a variant stream first.
 Dependency direction (acyclic): DNA-Report -> {MethylAsk, GeneAsk} -> bio-core.
 """
 from __future__ import annotations
+import contextlib
+import gzip
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from .detect import detect, InputKind, ROUTING
 
@@ -184,6 +188,68 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
     return findings, reg.status(), clock_results
 
 
+def _reader_error(e: Exception) -> str:
+    """A one-line, plain-English reason a variant reader refused a file.
+
+    These strings reach the reader in the report's notes, so they name the file
+    problem rather than the Python exception where the two differ.
+    """
+    msg = str(e).strip() or e.__class__.__name__
+    if isinstance(e, NotImplementedError) and "seek" in msg:
+        # htslib can only seek in BGZF; a .vcf.gz made with plain gzip raises this
+        return ("the file is compressed with plain gzip rather than bgzip, which "
+                "the variant reader cannot index. Re-compress with `bgzip`, or "
+                "upload the VCF uncompressed.")
+    return f"{e.__class__.__name__}: {msg[:200]}"
+
+
+def _is_bgzf(path: str) -> bool:
+    """True if a gzip file is BGZF (block-gzip), the only flavour htslib reads.
+
+    BGZF is gzip with an extra 'BC' subfield in the header, so the distinction is
+    invisible from the filename: `gzip file.vcf` and `bgzip file.vcf` both produce
+    `file.vcf.gz`, and only the second one can be read by pysam.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return False
+    return head[:4] == b"\x1f\x8b\x08\x04" and head[12:14] == b"BC"
+
+
+@contextlib.contextmanager
+def _pysam_readable(path: str, kind: InputKind, result: "ReportResult"):
+    """Yield a path the variant readers can actually open.
+
+    A VCF compressed with plain gzip instead of bgzip is a routine thing for a
+    user to produce — the extension is identical — and htslib cannot read it:
+    every variant reader raises, and the report comes back empty. Decompressing
+    to scratch costs one pass over the file and turns a dead end into a report.
+
+    Only the VCF path needs this; the methylation formats are not read via htslib,
+    and decompressing a large beta matrix here would be waste.
+    """
+    if kind != InputKind.VCF or not str(path).endswith(".gz") or _is_bgzf(path):
+        yield path
+        return
+    tmp = tempfile.mkdtemp(prefix="dnr-gz-")
+    plain = os.path.join(tmp, os.path.basename(path)[: -len(".gz")])
+    try:
+        with gzip.open(path, "rb") as src, open(plain, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        result.notes.append(
+            "This VCF was compressed with plain gzip rather than bgzip, so it was "
+            "decompressed before analysis. The results are unaffected; bgzip is "
+            "faster to read if you upload again.")
+        yield plain
+    except OSError as e:
+        result.notes.append(f"This VCF could not be decompressed: {_reader_error(e)}")
+        yield path
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     """Interpret a single-sample VCF/23andMe callset -> (findings, status).
 
@@ -224,12 +290,23 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
         else:
             from biocore.variants.carried import carried_variants
             carried = carried_variants(path)
+            if not carried:
+                notes.append(
+                    "No carried variants were read from this VCF, so the ClinVar "
+                    "screen had nothing to match. The usual cause is a sites-only "
+                    "VCF: with no sample column there are no genotypes, and a "
+                    "variant list without genotypes says nothing about the person "
+                    "who uploaded it.")
             findings += screen_findings(carried, panel)
     except ImportError:
         raise
-    except Exception:
-        # a malformed file or missing pysam shouldn't kill the whole report
-        pass
+    except Exception as e:
+        # A malformed file or missing pysam shouldn't kill the whole report — but
+        # it MUST NOT vanish either. Swallowed silently, an unreadable VCF came
+        # back as a scan that legitimately found nothing, which is a different
+        # claim entirely and one the reader has no way to question.
+        notes.append("ClinVar screen did not run on this file: "
+                     f"{_reader_error(e)}")
 
     # trait table: fall back to GeneAsk's bundled consumer-genetics table when a
     # caller doesn't supply one, so a genome upload reports traits by default.
@@ -247,8 +324,8 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
             # traits are behavioural/physiological, not clinical -> topic 'trait'
             f.detail.setdefault("topic", "other")
         findings += tf
-    except Exception:
-        pass
+    except Exception as e:
+        notes.append(f"Trait table did not run on this file: {_reader_error(e)}")
 
     # GWAS Catalog SNP-trait annotations, mirror-first: only fires when the
     # GWAS mirror volume has been built (refresh:gwas on a worker). For array
@@ -464,22 +541,25 @@ def analyze(path: str, *, trait_table: str | None = None,
             result.notes.append(f"bio-core modBAM reader unavailable ({e}); needs pysam.")
         return result
 
-    if "methylask" in engines:
-        try:
-            f, st, clk = _run_methylask(path, kind, tissue=tissue)
-            result.findings += f
-            result.provider_status += st
-            result.clocks += clk
-        except ImportError as e:
-            result.notes.append(f"MethylAsk not installed: {e}")
+    # engines read `work`, which is `path` except for a plain-gzip VCF; scan_stats
+    # keeps `path` so the report states the size of what the user actually uploaded.
+    with _pysam_readable(path, kind, result) as work:
+        if "methylask" in engines:
+            try:
+                f, st, clk = _run_methylask(work, kind, tissue=tissue)
+                result.findings += f
+                result.provider_status += st
+                result.clocks += clk
+            except ImportError as e:
+                result.notes.append(f"MethylAsk not installed: {e}")
 
-    if "geneask" in engines:
-        try:
-            f, gnotes = _run_geneask(path, kind, trait_table=trait_table)
-            result.findings += f
-            result.notes += gnotes
-        except ImportError as e:
-            result.notes.append(f"GeneAsk not installed: {e}")
+        if "geneask" in engines:
+            try:
+                f, gnotes = _run_geneask(work, kind, trait_table=trait_table)
+                result.findings += f
+                result.notes += gnotes
+            except ImportError as e:
+                result.notes.append(f"GeneAsk not installed: {e}")
 
     result.scan_stats = _scan_stats(path, result)
     return result

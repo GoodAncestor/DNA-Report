@@ -4,7 +4,8 @@
 from __future__ import annotations
 import argparse, json
 from .detect import route
-from .orchestrate import analyze, render, compare
+from .orchestrate import analyze, compare
+from .report import render_report
 
 
 def main():
@@ -31,14 +32,14 @@ def main():
         print(json.dumps({"file": args.file, "kind": kind.value, "engines": list(engines)}))
     elif args.cmd == "analyze":
         res = analyze(args.file, trait_table=args.traits, reference_fasta=args.reference)
-        out = render(res, args.out) if res.findings else None
+        out = render_report(res, args.out, filename=args.file)
         print(json.dumps({
             "kind": res.kind.value, "engines": list(res.engines),
             "n_findings": len(res.findings), "report": out, "notes": res.notes,
         }))
     elif args.cmd == "compare":
         res = compare(args.vcf)
-        out = render(res, args.out) if res.findings else None
+        out = render_report(res, args.out, filename=args.vcf)
         print(json.dumps({
             "mode": "compare", "n_findings": len(res.findings),
             "report": out, "notes": res.notes,

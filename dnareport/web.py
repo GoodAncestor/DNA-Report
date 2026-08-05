@@ -54,7 +54,7 @@ queue backend the /enqueue path is disabled and only inline analysis runs, so th
 app degrades to a standalone analyzer.
 """
 from __future__ import annotations
-import os, re, sys, json, uuid, shutil, tempfile, html as _html
+import os, re, sys, json, uuid, shutil, tempfile, contextlib, html as _html
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
@@ -64,13 +64,14 @@ from fastapi.concurrency import run_in_threadpool
 from . import __version__
 from .detect import detect, InputKind
 from .tiering import job_tier, queue_enabled, QUEUED
-from .orchestrate import analyze, compare, render, _marker_url, _scan_stats
+from .orchestrate import analyze, compare, _marker_url, _scan_stats
+from .report import KIND_LABEL as _KIND_LABEL, render_report, report_html
 from .tissue import infer_tissue
 from .landing import LANDING_HTML
 from .serialize import result_to_json
 from . import pages
 from .uploads import (UploadError, ACCEPTED_FORMATS, INLINE_R2_MAX, stream_to_disk,
-                      unwrap_archive, sanitize_note)
+                      unwrap_archive)
 
 RESULT_DIR = os.environ.get("DNAREPORT_RESULT_DIR", tempfile.gettempdir())
 QUEUE_URL = os.environ.get("DNAREPORT_QUEUE_URL")
@@ -239,18 +240,6 @@ app = FastAPI(title="DNA-Report", docs_url=None, redoc_url=None, openapi_url=Non
 
 # Human-facing names for the detected kinds, so a refusal or an empty result can
 # say "AncestryDNA-style genotype export" instead of "array_genotype".
-_KIND_LABEL = {
-    InputKind.TWENTYTHREE_AND_ME: "23andMe raw genotype export",
-    InputKind.ARRAY_GENOTYPE: "Consumer genotype export",
-    InputKind.VCF: "VCF genome",
-    InputKind.BEDMETHYL: "bedMethyl methylation calls",
-    InputKind.BETA_MATRIX: "Methylation beta-value table",
-    InputKind.IDAT: "Illumina IDAT array file",
-    InputKind.MODBAM: "ONT modBAM",
-    InputKind.UNKNOWN: "Unrecognised",
-}
-
-
 def _article(kind) -> str:
     """"A" or "An" for a kind label, so the title and the message body agree."""
     return "An" if _KIND_LABEL.get(kind, "")[:1].upper() in "AEIOU" else "A"
@@ -422,64 +411,11 @@ def _queue():
 
 
 def _render_full(result, out_path: str) -> str:
-    """Compose the browser report: the highlights section (aging clocks + cited
-    reference positions, product layer) + bio-core's finding/disclaimer render.
-
-    Reference positions are pulled OUT of the findings list before bio-core
-    renders it — they are the headline of a methylome report, not one card among
-    several dozen. The swap is restored afterwards so the JSON surface, which
-    does not go through here, still carries them as ordinary findings.
-    """
-    from .highlights import (split_reference_findings, split_display_findings,
-                             highlights_html)
-
-    _, rest = split_reference_findings(list(result.findings or []))
-    rest, _withheld = split_display_findings(rest)
-    original = result.findings
-    result.findings = rest
-    try:
-        render(result, out_path)                   # bio-core findings + disclaimer
-    finally:
-        result.findings = original
-
-    body = Path(out_path).read_text()
-
-    def _append(html: str):
-        """Put a section at the end of the document, inside <body>."""
-        nonlocal body
-        if not html:
-            return
-        if "</body>" in body:
-            body = body.replace("</body>", html + "\n</body>", 1)
-        else:
-            body += html
-
-    # What the scan covered and what it left out. The engines have always
-    # produced these notes and the JSON API has always returned them; the HTML
-    # report showed none of them, so a bounded report — 1,000 GWAS associations
-    # of 442,712 — was indistinguishable from a complete one to the only
-    # audience that reads the HTML.
-    from .scan_notes import notes_html
-    _append(notes_html(result))
-
-    # Glossary goes at the END, after the findings it explains — the copy is
-    # per-trait while findings are per-marker, so it is written once here and
-    # each finding links to its entry rather than restating it.
-    from .glossary import glossary_html
-    _append(glossary_html(rest))
-
-    top = highlights_html(result)
-    if top:
-        # inject the highlights section at the top of the document body
-        if "<body>" in body:
-            body = body.replace("<body>", "<body>\n" + top, 1)
-        else:
-            body = top + body
-    # Write unconditionally. This used to happen only when there WERE highlights,
-    # so on a report without them the glossary was built and then thrown away —
-    # the caller re-reads this file, and never saw it.
-    Path(out_path).write_text(body)
-    return out_path
+    """Compose the browser report. The composition itself lives in `report.py`
+    so the batch worker writes the SAME document — it used to render bio-core's
+    findings alone, dropping the notes, glossary and highlights sections from
+    every queued report."""
+    return render_report(result, out_path)
 
 
 def _client_key(request) -> str:
@@ -588,29 +524,16 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
         _check_api_key(x_api_key, key_q)
         return JSONResponse(result_to_json(res, marker_url=_marker_url))
 
-    if not res.findings and not res.clocks:
-        # A readable file that yielded nothing is a RESULT (200), so it is served
-        # as a real page that says what was recognised and why a valid file can
-        # come back empty — not as a bare JSON object.
-        scratch = os.path.dirname(local)
-        display = filename or os.path.basename(local)
-        notes = [n for n in (sanitize_note(n, scratch, display) for n in res.notes) if n]
-        return HTMLResponse(pages.empty_report_page(
-            kind_label=_KIND_LABEL.get(kind, kind.value),
-            filename=display, notes=notes))
-    out = os.path.join(RESULT_DIR, f"{uuid.uuid4().hex}.html")
-    _render_full(res, out)
-    try:
-        return HTMLResponse(Path(out).read_text())
-    finally:
-        # The inline path returns the report in the response body, so this file
-        # is scratch, not storage. Leaving it behind grew RESULT_DIR without
-        # bound and left a rendered copy of someone's findings on disk. Queued
-        # jobs are unaffected — those are served from R2 or written by a worker.
-        try:
-            os.unlink(out)
-        except OSError:
-            pass
+    # A readable file that yielded nothing is a RESULT (200): report_html serves
+    # the empty-report page, which says what was recognised and why a valid file
+    # can come back empty, instead of a bare JSON object. The inline path returns
+    # the document in the response body, so nothing is left on disk — a rendered
+    # copy of someone's findings persisting in RESULT_DIR was both an unbounded
+    # directory and a privacy leak.
+    return HTMLResponse(report_html(
+        res, filename=filename or os.path.basename(local),
+        scratch=os.path.dirname(local),
+        kind_label=_KIND_LABEL.get(kind, kind.value)))
 
 
 def _wants_json(accept: str, fmt: str) -> bool:
@@ -784,6 +707,12 @@ def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
         job["notify_email"] = email
         job["newsletter"] = bool(newsletter)
     q.rpush("dnareport:jobs", json.dumps(job))
+    # When this job was accepted, so the claim link can say how long the wait has
+    # been and give up on a job that is never coming. Without it the app had no
+    # idea whether a 202 was twenty seconds old or two hours old. TTL well past
+    # the results bucket's 30-day expiry, so it never outlives what it describes.
+    with contextlib.suppress(Exception):
+        q.set(f"dnareport:queued:{job_id}", str(_time.time()), ex=40 * 86400)
     return job_id
 
 
@@ -1105,6 +1034,46 @@ def enqueue(payload: dict, authorization: str = Header(default="")):
     return {"job_id": job_id, "status": "queued"}
 
 
+# A queued job that has produced no report after this long is treated as never
+# coming, and the claim link says so instead of refreshing for ever.
+JOB_OVERDUE_SECONDS = int(os.environ.get("DNAREPORT_JOB_OVERDUE_SECONDS", "1800"))
+# How much of the dead-letter list to search for a specific job. Bounded because
+# this runs on every poll of every claim link.
+_DEAD_LETTER_SCAN = 500
+
+
+def _job_waited(job_id: str) -> float | None:
+    """Seconds since this job was accepted, or None if we never recorded it
+    (a job queued before this was added, or no queue configured)."""
+    q = _queue()
+    if q is None:
+        return None
+    try:
+        raw = q.get(f"dnareport:queued:{job_id}")
+        return max(0.0, _time.time() - float(raw)) if raw else None
+    except Exception:
+        return None
+
+
+def _job_dead_lettered(job_id: str) -> str | None:
+    """The recorded error if this job reached the dead-letter list, else None.
+
+    A job the workers have given up on is a definite answer, and the claim link
+    should give it immediately rather than waiting out the overdue timeout.
+    """
+    q = _queue()
+    if q is None:
+        return None
+    try:
+        for raw in q.lrange("dnareport:failed", -_DEAD_LETTER_SCAN, -1):
+            job = json.loads(raw)
+            if job.get("job_id") == job_id:
+                return str(job.get("_error") or "The analysis stopped with an error.")
+    except Exception:
+        return None
+    return None
+
+
 @app.get("/result/{job_id}")
 def result(job_id: str):
     """Serve a finished report by its claim link. While the worker is still
@@ -1122,10 +1091,24 @@ def result(job_id: str):
     out = os.path.join(RESULT_DIR, f"{job_id}.html")
     if os.path.exists(out):
         return HTMLResponse(Path(out).read_text())
-    # Tell a programmatic caller how often to come back. Without it, clients pick
-    # their own cadence, and a fast poll from one address looks enough like abuse
-    # that the managed WAF ruleset answers with a challenge — which a browser
-    # solves and a script cannot, so the claim link simply stops working for API
-    # callers. The page itself re-refreshes on the same interval.
-    return HTMLResponse(pages.waiting_page(job_id), status_code=202,
+    # No report yet. Three different situations used to be presented identically,
+    # as a 202 behind a page that refreshed for ever — so a job that had failed,
+    # a job that was lost, and a job still running were indistinguishable, and the
+    # first two never resolved.
+    error = _job_dead_lettered(job_id)
+    if error:
+        # Definitively failed. 500 because the failure is ours, and because a
+        # polling client must not read this page as a delivered report.
+        return HTMLResponse(pages.job_failed_page(job_id, error), status_code=500)
+    waited = _job_waited(job_id)
+    if waited is not None and waited > JOB_OVERDUE_SECONDS:
+        # Overdue. 504 rather than 200: we cannot confirm a failure, but this is
+        # not a result, and a script polling the link must be able to tell.
+        return HTMLResponse(pages.job_overdue_page(job_id, waited), status_code=504)
+    # Still working. Tell a programmatic caller how often to come back: without it,
+    # clients pick their own cadence, and a fast poll from one address looks enough
+    # like abuse that the managed WAF ruleset answers with a challenge — which a
+    # browser solves and a script cannot, so the claim link simply stops working
+    # for API callers. The page itself re-refreshes on the same interval.
+    return HTMLResponse(pages.waiting_page(job_id, waited), status_code=202,
                         headers={"Retry-After": "15"})

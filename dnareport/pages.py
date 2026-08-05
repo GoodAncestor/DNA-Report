@@ -248,13 +248,32 @@ _WAITING_CSS = """
 """
 
 
-def waiting_page(job_id: str) -> str:
+def _elapsed(seconds: float | None) -> str:
+    """'4 minutes', '1 hour 5 minutes' — how long the person has been waiting."""
+    if seconds is None:
+        return ""
+    s = int(max(0, seconds))
+    if s < 90:
+        return f"{s} seconds"
+    m, h = (s // 60) % 60, s // 3600
+    if not h:
+        return f"{m} minutes"
+    return f"{h} hour{'s' if h > 1 else ''}" + (f" {m} minutes" if m else "")
+
+
+def waiting_page(job_id: str, waited: float | None = None) -> str:
     """The claim-link page shown while a queued job is still being worked.
 
     Self-refreshing and bookmarkable: the same URL becomes the report the moment
     the worker writes it, so nobody has to keep a tab open.
+
+    It states how long the wait has been so far. Without that the page looked
+    identical after twenty seconds and after two hours, which is what let a job
+    that had actually failed keep presenting itself as one about to finish.
     """
     esc = _html.escape
+    waited_line = (f"<p class='job'>Waiting {esc(_elapsed(waited))} so far</p>"
+                   if waited is not None else "")
     body = f"""
  <header>
    <p class="eyebrow">Good&nbsp;Ancestor &middot; DNA-Report</p>
@@ -267,6 +286,7 @@ def waiting_page(job_id: str) -> str:
    <p>Your file is being analysed against the reference databases.</p>
    <p>This page refreshes itself. You can also <strong>bookmark this link</strong> and
      come back &mdash; it becomes your report the moment it is ready.</p>
+   {waited_line}
    <p class="job">Job {esc(job_id)}</p>
  </div>
 
@@ -276,3 +296,92 @@ def waiting_page(job_id: str) -> str:
     page = _shell("DNA-Report — preparing your report", body, _WAITING_CSS)
     # refresh tag goes in the head the shell built
     return page.replace("<title>", '<meta http-equiv="refresh" content="15">\n<title>', 1)
+
+
+def job_overdue_page(job_id: str, waited: float | None = None) -> str:
+    """The claim link has waited longer than any real job should take.
+
+    A give-up point exists because every way a queued job can fail — a worker
+    that died between leasing and writing, a report that was never uploaded, a
+    queue that lost the job — looked exactly like a slow job on the waiting page,
+    and that page refreshed for ever. Telling someone their report is late is a
+    worse answer than a report and a much better one than an animation that never
+    stops. Deliberately does NOT auto-refresh.
+    """
+    esc = _html.escape
+    waited_line = (f"<p class='job'>No report after {esc(_elapsed(waited))}</p>"
+                   if waited is not None else "")
+    body = f"""
+ <header>
+   <p class="eyebrow">Good&nbsp;Ancestor &middot; DNA-Report</p>
+   <h1>Your report is overdue</h1>
+   <p class="lede">This job has been queued far longer than an analysis takes, so
+     rather than keep you watching a spinner: something has probably gone wrong at
+     our end, not with your file.</p>
+   <div class="track" aria-hidden="true"></div>
+ </header>
+
+ <div class="plate">
+   {waited_line}
+   <p class="job">Job {esc(job_id)}</p>
+ </div>
+
+ <section class="after">
+   <p class="rule">What to do</p>
+   <ul class="reasons">
+     <li><b>Reload this page once more.</b> If the analysis did finish in the
+       meantime, this link still becomes your report &mdash; it stays valid.</li>
+     <li><b>Upload the file again.</b> A fresh job is the fastest fix, and costs
+       you nothing but the upload.</li>
+     <li><b>Tell us, quoting the job id above.</b> It is how we find what happened
+       to this specific run.</li>
+   </ul>
+   <p>Your uploaded file has already been deleted either way &mdash; we do not keep
+     it while a job is stuck.</p>
+ </section>
+
+ <div class="actions">
+   <a class="btn primary" href="/">Upload the file again</a>
+ </div>
+"""
+    return _shell("DNA-Report — report overdue", body, _EMPTY_CSS)
+
+
+def job_failed_page(job_id: str, reason: str = "") -> str:
+    """A queued job that definitively failed — it reached the dead-letter list.
+
+    A known failure is worth saying plainly and immediately, instead of leaving
+    the claim link to time out into the overdue page much later.
+    """
+    esc = _html.escape
+    why = (f"<p class='why'>{esc(reason)}</p>" if reason else "")
+    body = f"""
+ <header>
+   <p class="eyebrow">Good&nbsp;Ancestor &middot; DNA-Report</p>
+   <h1>This analysis did not complete</h1>
+   <p class="lede">The job stopped with an error and was not retried further. That is
+     ours to fix, and it is better said than left to look like a long wait.</p>
+   <div class="track" aria-hidden="true"></div>
+ </header>
+
+ <div class="plate">
+   <p class="code">Failed</p>
+   {why}
+   <p class="job">Job {esc(job_id)}</p>
+ </div>
+
+ <section class="after">
+   <p class="rule">What to do</p>
+   <ul class="reasons">
+     <li><b>Try the upload once more.</b> Some failures are transient &mdash; a node
+       dropping out mid-analysis, for instance.</li>
+     <li><b>If it fails again, send us the job id.</b> The error above is recorded
+       against it, so we can see exactly what stopped.</li>
+   </ul>
+ </section>
+
+ <div class="actions">
+   <a class="btn primary" href="/">Try again</a>
+ </div>
+"""
+    return _shell("DNA-Report — analysis failed", body, _EMPTY_CSS)
