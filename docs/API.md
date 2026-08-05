@@ -64,9 +64,29 @@ Three steps, no key required on any of them:
 
 Over 64 MB, step 1 answers `413` and you need the multipart flow
 (`/upload/multipart/create`, `/sign`, `/complete`), which returns a `job_id`
-instead of a report. Poll `GET /result/{job_id}`: `202` while it is still
-running, `200` with the report when it is done. Note that the job id is the only
-credential on that URL — anyone holding it can read the report.
+instead of a report. Parts are PUT to presigned URLs on
+`*.r2.cloudflarestorage.com`, so compressed content is fine at any size — it
+never crosses the CDN edge that refuses it. Verified with an 82.9 MB `.vcf.gz`.
+
+Poll `GET /result/{job_id}`: `202` while it is still running, `200` with the
+report when it is done. The job id is the only credential on that URL — anyone
+holding it can read the report.
+
+**Honour the `Retry-After` on the 202 and do not poll faster than it says.** The
+edge's managed security rules treat rapid repeat requests from one address as
+abuse and answer with a challenge, which a browser can solve and your client
+cannot; it will surface as a `403` that clears on its own a few minutes later.
+Polling every 10 seconds was enough to trigger it in testing.
+
+## Two client gotchas
+
+Python's **stdlib `urllib` is blocked at the edge** — its default User-Agent
+matches a browser-integrity signature and every request returns `403` with
+Cloudflare error `1010`, before it reaches us. `requests`, `httpx` and `curl` are
+all fine. If you must use `urllib`, set an explicit `User-Agent`.
+
+Sustained request rates are capped both at the edge and in the app. The app
+answers `429` with your key named in its own counters; the edge answers `403`.
 
 ## Response
 

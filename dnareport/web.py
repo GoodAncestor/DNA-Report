@@ -1122,4 +1122,10 @@ def result(job_id: str):
     out = os.path.join(RESULT_DIR, f"{job_id}.html")
     if os.path.exists(out):
         return HTMLResponse(Path(out).read_text())
-    return HTMLResponse(pages.waiting_page(job_id), status_code=202)
+    # Tell a programmatic caller how often to come back. Without it, clients pick
+    # their own cadence, and a fast poll from one address looks enough like abuse
+    # that the managed WAF ruleset answers with a challenge — which a browser
+    # solves and a script cannot, so the claim link simply stops working for API
+    # callers. The page itself re-refreshes on the same interval.
+    return HTMLResponse(pages.waiting_page(job_id), status_code=202,
+                        headers={"Retry-After": "15"})
