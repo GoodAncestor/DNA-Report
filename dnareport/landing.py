@@ -742,6 +742,25 @@ _LANDING_TEMPLATE = """<!doctype html>
      message:'The request never reached the analyser \\u2014 an edge security rule rejected it first. '+
        'Compressed archives are the usual trigger.',
      hint:'Unzip the file and upload the data file inside it directly.'};
+   // Timeouts are their own thing and must not be reported as "our bug", which
+   // tells someone on a slow line to retry the exact thing that just failed.
+   // 524 is the edge giving up on US: the analysis ran past its ceiling. 408 and
+   // 504 are the upload itself taking too long, which is what a slow connection
+   // looks like from here. Both have the same answer — the parted upload, which
+   // sends in chunks and has no such ceiling — so both say so.
+   if(r.status===524||r.status===504||r.status===408||r.status===522) return {
+     code:'timed_out',
+     title:r.status===524?'This file took too long to analyse'
+                         :'The upload ran out of time before it finished',
+     message:r.status===524
+       ? 'Your file uploaded fine, but the report was still being built when the '+
+         'connection timed out. Large consumer files can take longer than the '+
+         'instant path allows.'
+       : 'The connection was still sending when it timed out. On a slower link a '+
+         'file this size can take longer than a single upload is allowed to run.',
+     hint:'Sending it in parts avoids the time limit. We are retrying that way now \\u2014 '+
+          'it is slower to start but it will not time out, and you get a link you '+
+          'can come back to.'};
    if(r.status>=500) return {code:'server_error',title:'The analyser hit an error',
      message:'Something failed on our side while handling this file (HTTP '+r.status+').',
      hint:'This is our bug, not your file. Trying again shortly is worth a shot.'};
@@ -902,6 +921,16 @@ _LANDING_TEMPLATE = """<!doctype html>
    // 413 from the edge arrives with no JSON body at all, so `err` is null and an
    // oversized genome dead-ended on a message naming a flow it could not start.
    if(r.status===413){
+     if(await runLargeUpload(chosen)) return;
+     return;
+   }
+   // A timeout has the same answer as "too heavy": the parted upload has no time
+   // ceiling, because the report is built by a worker and claimed from a link
+   // rather than held open on this connection. Recovering automatically matters
+   // most for exactly the people least able to retry — someone on a slow line
+   // has already spent minutes sending this file once.
+   if(r.status===524||r.status===504||r.status===408||r.status===522){
+     showFail(transportError(r));
      if(await runLargeUpload(chosen)) return;
      return;
    }

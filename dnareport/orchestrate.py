@@ -11,8 +11,40 @@ splits it into a methylation stream and a variant stream first.
 Dependency direction (acyclic): DNA-Report -> {MethylAsk, GeneAsk} -> bio-core.
 """
 from __future__ import annotations
+import os
 from dataclasses import dataclass, field
 from .detect import detect, InputKind, ROUTING
+
+# Ceiling on GWAS trait associations carried into one report. Consumer arrays are
+# selected for GWAS overlap, so this is the difference between a readable report
+# and a half-gigabyte document — see cap_gwas_findings().
+MAX_GWAS_FINDINGS = int(os.environ.get("DNAREPORT_MAX_GWAS_FINDINGS", "1000"))
+
+
+def cap_gwas_findings(gwas: list, limit: int = None):
+    """(kept, notes) — the strongest `limit` associations, and a note if any were
+    dropped.
+
+    A 650k-variant AncestryDNA export measured 442,719 GWAS findings and rendered
+    a 495 MB report: not readable, and on a slow connection not downloadable.
+
+    Two properties matter. Ranking is by p-value so truncation keeps the best
+    evidence rather than whatever the file listed first — and an association with
+    NO p-value sorts last, because ranking an unquantified claim above a
+    genome-wide significant one would put the least supported result at the top.
+    And the cut is stated in the report, because silent truncation reads as "this
+    is everything we found".
+    """
+    limit = MAX_GWAS_FINDINGS if limit is None else limit
+    if len(gwas) <= limit:
+        return gwas, []
+    gwas = sorted(gwas, key=lambda f: (f.detail or {}).get("p") or 1.0)
+    total = len(gwas)
+    return gwas[:limit], [
+        f"GWAS Catalog: showing the {limit} most statistically significant "
+        f"associations of {total} found. The rest are weaker associations on the "
+        "same array, omitted to keep the report readable rather than because "
+        "they were judged unreliable."]
 
 
 @dataclass
@@ -224,15 +256,31 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     # returns nothing, so this is a no-op until the mirror exists.
     try:
         if is_array and parsed is not None:
-            from geneask.annotators.gwas_catalog import findings_for
+            from geneask.annotators.gwas_catalog import (mirror_lookup_many,
+                                                         findings_from_rows)
+            # Fetch every association for the whole callset up front. Asking per
+            # record opened one SQLite connection per SNP — measured at 31s of a
+            # 48s report on a 650k-variant consumer array, two thirds of the
+            # runtime, and the reason a large array outran the CDN's 100s ceiling.
+            # The rsIDs are deduplicated on the way in; a callset repeats them.
+            usable = [r for r in parsed.records
+                      if not r.is_nocall and r.rsid.startswith("rs")]
+            by_rsid = mirror_lookup_many(r.rsid for r in usable)
             seen = 0
-            for r in parsed.records:
-                if r.is_nocall or not r.rsid.startswith("rs"):
+            gwas: list = []
+            for r in usable:
+                rows = by_rsid.get(r.rsid)
+                if not rows:
                     continue
                 carried = {a for a in (r.allele1, r.allele2) if a}
-                gfs = findings_for(r.rsid, carried_alleles=carried)
-                findings += gfs
+                gfs = findings_from_rows(r.rsid, rows, carried_alleles=carried)
+                gwas += gfs
                 seen += 1 if gfs else 0
+            # Bound the report. Nothing is filtered on scientific grounds here;
+            # it is a size limit, and it says so in the report.
+            gwas, cap_notes = cap_gwas_findings(gwas)
+            notes += cap_notes
+            findings += gwas
             if seen:
                 notes.append(f"GWAS Catalog: annotated {seen} variants from the local mirror")
     except Exception:
