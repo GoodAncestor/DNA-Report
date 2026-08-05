@@ -271,8 +271,18 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
             parsed = parse_file(path)
         except ImportError:
             raise
-        except Exception:
+        except Exception as e:
+            # Everything downstream of the parse is gated on `parsed`, so losing
+            # this exception silently produced a report with no findings and no
+            # stated reason — for a consumer genotype export, which is the most
+            # common upload there is. Say it instead.
             parsed = None
+            notes.append("This genotype export could not be parsed, so no variant "
+                         f"screen ran on it: {_reader_error(e)}")
+    if is_array and parsed is not None and not getattr(parsed, "records", None):
+        notes.append("This genotype export parsed but contained no genotype rows, "
+                     "so there was nothing to screen. A partial or re-saved export "
+                     "is the usual cause — upload the file exactly as downloaded.")
 
     # ClinVar clinical screen. Two input paths:
     #   VCF        -> bio-core carried_variants (pysam, REF/ALT already in the file)
