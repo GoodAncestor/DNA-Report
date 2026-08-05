@@ -133,3 +133,25 @@ def test_a_missing_export_does_not_masquerade_as_a_missing_report(monkeypatch):
     monkeypatch.setattr(web, "_r2_result_html", lambda job, fmt="html": None)
     r = client.get(f"/result/{_job()}?format=json")
     assert r.status_code in (202, 500, 504)
+
+
+# --------------------------------------------------------------- stored gzip
+def test_a_compressed_report_is_inflated_on_read():
+    """Reports are stored gzipped, and boto3 returns the stored bytes regardless
+    of ContentEncoding — so the reader has to inflate them itself."""
+    import gzip
+    from dnareport.web import _maybe_gunzip
+    assert _maybe_gunzip(gzip.compress(b"<html>hi</html>")) == b"<html>hi</html>"
+
+
+def test_reports_stored_before_compression_still_read():
+    """The bucket holds plain objects written before this change; both shapes must
+    work from one code path, which is why the magic number is sniffed rather than
+    the metadata trusted."""
+    from dnareport.web import _maybe_gunzip
+    assert _maybe_gunzip(b"<html>plain</html>") == b"<html>plain</html>"
+
+
+def test_a_corrupt_gzip_does_not_take_the_page_down():
+    from dnareport.web import _maybe_gunzip
+    assert _maybe_gunzip(b"\x1f\x8btruncated") == b"\x1f\x8btruncated"

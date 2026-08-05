@@ -177,6 +177,28 @@ def _r2_client():
     return boto3.client("s3", endpoint_url=R2_ENDPOINT, region_name="auto",
                         config=Config(signature_version="s3v4"))
 
+def _maybe_gunzip(raw: bytes) -> bytes:
+    """Inflate a stored report if it is compressed.
+
+    Reports are stored gzipped — measured 24x on the JSON of a real report, which
+    is what makes publishing a complete finding set affordable instead of capping
+    it for storage. boto3 does NOT honour ContentEncoding on the way back: it
+    returns exactly the bytes stored, so this has to be done here.
+
+    Sniffing the magic number rather than reading the metadata is deliberate.
+    Objects written before this change are stored plain, and both must keep
+    working from the same code path — a reader that trusted ContentEncoding would
+    hand a browser the raw deflate stream for every report in the bucket today.
+    """
+    if raw[:2] == b"\x1f\x8b":
+        import gzip
+        try:
+            return gzip.decompress(raw)
+        except OSError:
+            return raw       # truncated or not really gzip: let the caller see it
+    return raw
+
+
 def _r2_result_html(job_id: str, fmt: str = "html") -> str | None:
     """Fetch a worker-produced report from the R2 results bucket, or None if it
     isn't there yet / R2 isn't configured. `fmt` selects the published format —
@@ -187,7 +209,7 @@ def _r2_result_html(job_id: str, fmt: str = "html") -> str | None:
         import boto3
         s3 = boto3.client("s3", endpoint_url=R2_ENDPOINT)   # creds from env
         obj = s3.get_object(Bucket=R2_RESULTS_BUCKET, Key=f"{job_id}.{fmt}")
-        return obj["Body"].read().decode("utf-8", "replace")
+        return _maybe_gunzip(obj["Body"].read()).decode("utf-8", "replace")
     except Exception as e:
         # "not there yet" is the normal case while a worker is still running the
         # job — stay quiet for it. ANYTHING else (no boto3, bad creds, wrong
