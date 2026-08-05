@@ -1,0 +1,51 @@
+# Tell the WORKER image to rebuild when this repo changes.
+#
+# build-image.yml already rebuilds the app image on a push here. The worker image
+# lives in dna-report-deploy and pip-installs `dna-report` from `main` at build
+# time — so a change here alters that image too, while touching neither its repo
+# nor its Dockerfile. Nothing rebuilt it.
+#
+# That gap was not theoretical. On 2026-08-05 the app deployed at one commit while
+# both worker nodes ran an image built three commits earlier, and the worker is
+# what renders the queued report: the nodes were publishing exports without the
+# summary and truncation fields the app had just started promising. The engine
+# repos (bio-core, MethylAsk, GeneAsk) have had this dispatch for a while; this
+# repo is installed into the same image and did not.
+#
+# Only fires a rebuild. The payload carries no build input and the target workflow
+# does not read client_payload, so there is no path from this event to what gets
+# built — the worker always resolves its dependencies from main.
+name: notify-worker
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  # This repo's own tests first. A push here republishes an image in another repo,
+  # so a red suite must stop the dispatch rather than ship into it.
+  test:
+    uses: ./.github/workflows/test.yml
+
+  dispatch:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request a worker rebuild
+        env:
+          # Fine-grained PAT with Contents: Read and write on dna-report-deploy.
+          # Contents, not Actions — GitHub classes repository_dispatch as a
+          # Contents:write operation, which reads wrong but is what the API
+          # enforces. GITHUB_TOKEN cannot do this: it is scoped to this repo and
+          # cannot dispatch to a sibling.
+          GH_TOKEN: ${{ secrets.ENGINE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "ENGINE_DISPATCH_TOKEN is not set — the worker image will NOT rebuild."
+            echo "That is the silent-skew failure this workflow exists to prevent."
+            exit 1
+          fi
+          gh api repos/GoodAncestor/dna-report-deploy/dispatches \
+            -f event_type=engine-updated
+          echo "requested worker rebuild"
