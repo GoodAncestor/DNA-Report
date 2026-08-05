@@ -361,16 +361,32 @@ _counters: dict[str, int] = {}
 _counters_lock = _threading.Lock()
 _METRICS_HASH = "dnareport:metrics"
 _STARTED = _time.time()
+_metrics_redis = None      # memoised; see _metrics_client
+
+
+def _metrics_client():
+    """One Redis client for the life of the process.
+
+    _queue() builds a fresh client — and therefore a fresh connection pool and
+    socket — on every call. That is fine for enqueueing, which happens once per
+    large upload, and wrong here, where a counter is touched on nearly every
+    request: it would put a TCP setup and teardown in the hot path of the thing
+    it is supposed to be cheaply observing. Returns None when no backend is
+    configured, and caches that too so a standalone instance does not retry.
+    """
+    global _metrics_redis
+    if _metrics_redis is None:
+        try:
+            _metrics_redis = _queue() or False
+        except Exception:
+            _metrics_redis = False
+    return _metrics_redis or None
 
 
 def _count(name: str, n: int = 1):
     """Increment a counter. Never raises: a metrics failure must not become a
     request failure — losing a count is acceptable, losing a report is not."""
-    q = None
-    try:
-        q = _queue()
-    except Exception:
-        q = None
+    q = _metrics_client()
     if q is not None:
         try:
             q.hincrby(_METRICS_HASH, name, n)
@@ -385,7 +401,7 @@ def _read_counters():
     """(counters, scope). 'shared' means Redis-backed and comparable across
     workers; 'process' means this worker's view only."""
     try:
-        q = _queue()
+        q = _metrics_client()
         if q is not None:
             raw = q.hgetall(_METRICS_HASH)
             if raw is not None:
