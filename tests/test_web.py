@@ -40,8 +40,10 @@ def test_small_beta_matrix_is_inline():
     assert r.status_code == 200  # inline, not refused
 
 
-def test_idat_is_refused_with_r2_pointer():
-    # a heavy kind must not stream through the front door
+def test_idat_is_refused_with_r2_pointer(monkeypatch):
+    # A heavy kind must not be ANALYSED on the front door. Without a queue the only
+    # way to honour that is to refuse it and point at the large-file route.
+    monkeypatch.setattr(web, "_queue_is_usable", lambda: False)
     with tempfile.NamedTemporaryFile("wb", suffix=".idat", delete=False) as f:
         f.write(b"\x00" * 64); path = f.name
     with open(path, "rb") as fh:
@@ -49,6 +51,22 @@ def test_idat_is_refused_with_r2_pointer():
     os.unlink(path)
     assert r.status_code == 413
     assert "R2" in r.json()["detail"] or "upload" in r.json()["detail"].lower()
+
+
+def test_a_heavy_kind_is_accepted_as_a_job_when_there_is_a_queue(monkeypatch):
+    """With a worker to send it to, refusing an IDAT is the wrong answer — the
+    refusal only ever existed because this box could not do the work itself."""
+    monkeypatch.setattr(web, "_queue_is_usable", lambda: True)
+    monkeypatch.setattr(web, "_r2_client",
+                        lambda: type("S", (), {"upload_file": lambda *a: None})())
+    monkeypatch.setattr(web, "_enqueue_job", lambda *a, **kw: "d" * 32)
+    with tempfile.NamedTemporaryFile("wb", suffix=".idat", delete=False) as f:
+        f.write(b"\x00" * 64); path = f.name
+    with open(path, "rb") as fh:
+        r = client.post("/analyze", files={"file": ("x.idat", fh, "application/octet-stream")})
+    os.unlink(path)
+    assert r.status_code == 200
+    assert r.json()["job_id"] == "d" * 32
 
 
 def test_enqueue_requires_token():

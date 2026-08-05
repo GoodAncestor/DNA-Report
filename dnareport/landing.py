@@ -827,6 +827,7 @@ _LANDING_TEMPLATE = """<!doctype html>
      // same rule as the inline path: only a SUCCESSFUL html response may replace
      // this page, so an edge error page can never be grafted in as a report
      if(r.ok&&ct.includes('text/html')){ showReport(await r.text()); return true; }
+     if(await claimIfQueued(r,ct))return true;
      let err=null;
      if(ct.includes('application/json')){
        const j=await r.json().catch(()=>null);
@@ -844,6 +845,19 @@ _LANDING_TEMPLATE = """<!doctype html>
        hint:'Nothing was analysed and nothing was stored, so trying again is safe.'});
      return false;
    }
+ }
+
+ // A queued response can now come back from ANY upload route, because every
+ // upload is handed to a worker unless the queue is unavailable. One function
+ // recognises it, so the two upload paths cannot disagree about what a job looks
+ // like — and the claim link is the same bookmarkable URL either way.
+ async function claimIfQueued(r,ct){
+   if(!r.ok||!ct.includes('application/json'))return false;
+   // clone: if this turns out not to be a job, the caller still needs the body
+   // to read the error out of it
+   const j=await r.clone().json().catch(()=>null);
+   if(j&&j.job_id){ window.location.href='/result/'+j.job_id; return true; }
+   return false;
  }
 
  async function runLargeUpload(file){
@@ -887,12 +901,15 @@ _LANDING_TEMPLATE = """<!doctype html>
      statusEl.textContent='Analyzing\\u2026 this runs on the server and may take a moment.';
      const fd=new FormData(); fd.append('file',payload);
      if(tissue.value)fd.append('tissue',tissue.value);
-     // opt-ins (only used if the file is large enough to be queued; ignored for
-     // inline analysis, which returns the report immediately)
-     // NOTE: notify_email/newsletter are deliberately NOT sent here. /analyze
-     // returns the report in this response, so there is nothing to notify about
-     // — and FastAPI would silently discard them anyway. They are forwarded only
-     // on the large-file path, which is the one that actually runs later.
+     // Opt-ins ARE sent here now. They used to be omitted because /analyze
+     // returned the report in this response, leaving nothing to notify about;
+     // every upload is now handed to a worker, so a file posted here runs later
+     // just like a large one, and dropping the address would silently ignore
+     // someone who asked to be told when their report was ready.
+     const em=document.getElementById('notify_email');
+     const nl=document.getElementById('newsletter');
+     if(em&&em.value)fd.append('notify_email',em.value);
+     if(nl&&nl.checked)fd.append('newsletter','1');
      r=await fetch('/analyze',{method:'POST',body:fd,headers:{\n       // success must stay HTML (the report); errors must be JSON so the\n       // panel below can show the reason instead of a bare status code\n       'Accept':'text/html','X-Error-Format':'json'}});
    }catch(err){
      hideOverlay(); statusEl.textContent='';
@@ -908,6 +925,7 @@ _LANDING_TEMPLATE = """<!doctype html>
    // stranger's error page — which is exactly how a failed upload used to look
    // like the site breaking.
    if(r.ok&&ct.includes('text/html')){ showReport(await r.text()); return; }
+   if(await claimIfQueued(r,ct))return;
 
    let err=null;
    if(ct.includes('application/json')){

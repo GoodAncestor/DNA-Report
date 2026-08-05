@@ -103,6 +103,26 @@ R2_INLINE_PREFIX = "inline/"
 # it, so changing it would strand both for no gain.
 R2_QUEUED_PREFIX = "incoming/"
 
+# Send EVERY upload to a worker instead of analysing it on this box.
+#
+# The inline path has to finish inside Cloudflare's ~100s ceiling while the
+# browser holds the connection, and measurement says it cannot be relied on to:
+# a 0.2 MB VCF of 50,000 variants took 94.7s on this box, and two concurrent
+# genomes would push both past the edge. Worse, the ceiling is what forced the
+# caps — the GWAS cut to 1,000 of 442,712 associations exists because a complete
+# report could not be built in time, which for a health report is the wrong thing
+# to trade away.
+#
+# A worker has no such ceiling, so queueing lets the analysis be complete. Speed
+# becomes an outcome rather than a routing decision: a consumer export that
+# interprets in five seconds still shows a report in five seconds, because the
+# claim link resolves the moment the worker writes it.
+#
+# The inline code is deliberately LEFT IN PLACE behind this switch. Set
+# DNAREPORT_ALWAYS_QUEUE=0 to put every upload back on the old path — the queued
+# route is new in production and this is how it gets reverted without a deploy.
+ALWAYS_QUEUE = os.environ.get("DNAREPORT_ALWAYS_QUEUE", "1") not in ("0", "", "false")
+
 # R2 requires >= 5 MB for every part except the last. 16 MB matches what the
 # Worker-proxied flow used, so a browser's memory profile per part is unchanged.
 R2_PART_SIZE = 16 * 1024 * 1024
@@ -835,15 +855,16 @@ async def multipart_complete(request: Request):
 async def analyze_r2(request: Request):
     """Analyse an object the browser just PUT to R2, and answer with the report.
 
-    This is the instant path for compressed files: same detection, same tiering,
-    same renderer as /analyze — the only difference is where the bytes came from.
-    It deliberately does NOT enqueue: the common upload is a consumer export that
-    interprets in seconds, and handing someone a claim link for that would trade
-    the good experience for a worker dependency it does not need.
+    With a queue configured this hands the object to a worker and answers with a
+    claim link (see ALWAYS_QUEUE). Without one it analyses inline and returns the
+    report in this response: same detection, same renderer as /analyze, the only
+    difference being where the bytes came from.
 
-    The object is deleted as soon as it has been read, whatever the outcome. The
-    reports promise the upload does not outlive the request, and an object left
-    behind after a failed parse would quietly break that.
+    Deletion of the uploaded object differs between the two, and both honour the
+    promise the reports make. Inline, it is deleted as soon as it has been read,
+    whatever the outcome — an object left behind after a failed parse would quietly
+    break that. Queued, it MUST survive this request because the worker pulls it
+    from R2 itself; the worker deletes it when the job finishes, either way.
     """
     _count("route:/analyze/r2")
     _rate_limit(_client_key(request))
@@ -871,6 +892,13 @@ async def analyze_r2(request: Request):
             "needs_large_file_upload", "That file goes through the large-file upload",
             "The uploaded object is larger than the instant path accepts.",
             hint="Use the large-file upload instead.", status=413)
+
+    # Hand it to a worker rather than analysing it here. The object stays where it
+    # is — the worker pulls it from R2 itself and deletes it when done — so this
+    # must NOT fall through to the cleanup below.
+    if _queue_is_usable():
+        job_id = _enqueue_job(key, _advisory_kind(key))
+        return _queued_response(job_id)
 
     scratch = tempfile.mkdtemp(prefix="dnr-r2-")
     local = os.path.join(scratch, os.path.basename(key))
@@ -962,6 +990,8 @@ def api_docs(x_api_key: str = Header(default=""), api_key: str = ""):
 @app.post("/analyze")
 async def analyze_inline(request: Request,
                          file: UploadFile = File(...), tissue: str = Form(default=""),
+                         notify_email: str = Form(default=""),
+                         newsletter: str = Form(default=""),
                          format: str = "", accept: str = Header(default=""),
                          x_api_key: str = Header(default=""), api_key: str = ""):
     """Small inline uploads only. Returns HTML by default, or JSON (key-guarded)
@@ -997,6 +1027,22 @@ async def analyze_inline(request: Request,
             local, unwrapped = unwrap_archive(local, scratch)
             if unwrapped:
                 display = os.path.basename(local)
+
+            # Hand it to a worker rather than analysing it on the front door. The
+            # archive is unwrapped FIRST, so what reaches R2 is the genotype file
+            # itself — a worker has no unwrap step, and shipping the .zip would
+            # queue something it cannot read.
+            if _queue_is_usable():
+                key = (f"{R2_QUEUED_PREFIX}{uuid.uuid4().hex}/"
+                       f"{re.sub(r'[^A-Za-z0-9._-]', '_', display)[:120] or 'upload'}")
+                await run_in_threadpool(_r2_client().upload_file, local,
+                                        R2_INCOMING_BUCKET, key)
+                # UNBUNDLED consent, as everywhere else: an address given for
+                # delivery is never added to the newsletter unless that box was
+                # ticked too. _enqueue_job validates the address.
+                return _queued_response(_enqueue_job(
+                    key, _advisory_kind(display), 1, notify_email,
+                    newsletter not in ("", "0", "false")))
 
             # Off the event loop. Everything below _run_and_respond is
             # synchronous and can run for minutes on a large array, so calling
@@ -1040,6 +1086,39 @@ JOB_OVERDUE_SECONDS = int(os.environ.get("DNAREPORT_JOB_OVERDUE_SECONDS", "1800"
 # How much of the dead-letter list to search for a specific job. Bounded because
 # this runs on every poll of every claim link.
 _DEAD_LETTER_SCAN = 500
+
+
+def _queue_is_usable() -> bool:
+    """Whether an upload can actually be handed to a worker right now.
+
+    ALWAYS_QUEUE is an intent; this is the capability. Without a queue backend or
+    an object store there is nowhere to put the job or the file, and the inline
+    path is the only thing that can answer at all — standalone deployments and the
+    test suite run exactly like that, so queueing must degrade rather than fail.
+    """
+    return bool(ALWAYS_QUEUE and R2_ENDPOINT and queue_enabled())
+
+
+def _advisory_kind(name: str) -> str:
+    """A `kind` label for the job record, from the filename.
+
+    Advisory on purpose: the worker re-detects the real type from the file's
+    contents, so this never decides how the file is analysed. It exists so an
+    operator reading the queue can tell what is in it.
+    """
+    n = (name or "").lower()
+    for ext, kind in ((".vcf", "vcf"), (".idat", "idat"), (".bam", "modbam"),
+                      (".bed", "bedmethyl"), (".csv", "beta_matrix")):
+        if ext in n:
+            return kind
+    return "array_genotype"
+
+
+def _queued_response(job_id: str):
+    """Same shape the large-file flow already returns, so the page has one way of
+    recognising 'this became a job' regardless of which route it posted to."""
+    return JSONResponse({"job_id": job_id, "status": "queued",
+                         "claim_url": f"/result/{job_id}"})
 
 
 def _job_waited(job_id: str) -> float | None:

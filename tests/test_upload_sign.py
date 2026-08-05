@@ -120,7 +120,10 @@ def test_analyze_r2_runs_the_real_pipeline_on_a_downloaded_object(monkeypatch, t
 
 
 def test_analyze_r2_deletes_the_object_even_when_analysis_fails(monkeypatch, tmp_path):
-    # the deletion promise cannot be conditional on success
+    # the deletion promise cannot be conditional on success. Scoped to the inline
+    # path: when the job is queued instead, the object is deliberately left for the
+    # worker to pull and delete (see the test below).
+    monkeypatch.setattr(web, "_queue_is_usable", lambda: False)
     src = tmp_path / "junk.txt"
     src.write_text("this is not a genotype file at all\n")
     fake = _fake_r2(monkeypatch, str(src))
@@ -129,6 +132,26 @@ def test_analyze_r2_deletes_the_object_even_when_analysis_fails(monkeypatch, tmp
                     headers={"X-Error-Format": "json"})
     assert r.status_code >= 400          # unreadable -> refusal
     assert key in fake.deleted           # ...and still cleaned up
+
+
+def test_analyze_r2_hands_the_object_to_the_worker_instead_of_deleting_it(monkeypatch,
+                                                                          tmp_path):
+    """On the queued path the object MUST survive the request — the worker pulls it
+    from R2 itself. Deleting it here would queue a job whose input is already gone,
+    which is a report that can never be produced."""
+    src = tmp_path / "sample.csv"
+    src.write_text("probe,S1\ncg00000029,0.55\n")
+    fake = _fake_r2(monkeypatch, str(src))
+    monkeypatch.setattr(web, "_queue_is_usable", lambda: True)
+    monkeypatch.setattr(web, "_enqueue_job",
+                        lambda key, kind, *a, **kw: "c" * 32)
+    key = f"{web.R2_INLINE_PREFIX}abc/sample.csv"
+
+    r = client.post("/analyze/r2", json={"key": key})
+
+    assert r.status_code == 200
+    assert r.json()["job_id"] == "c" * 32
+    assert key not in fake.deleted
 
 
 def test_analyze_r2_rechecks_size_against_the_object_not_the_claim(monkeypatch, tmp_path):

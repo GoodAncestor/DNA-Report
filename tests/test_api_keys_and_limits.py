@@ -154,13 +154,16 @@ def test_the_guard_releases_its_slot_even_when_analysis_fails():
     assert web._inflight.count == 0
 
 
-def test_analysis_does_not_run_on_the_event_loop_thread():
+def test_analysis_does_not_run_on_the_event_loop_thread(monkeypatch):
     """/analyze is `async def` but the whole analysis under it is synchronous.
     Called directly it blocks the event loop, so ONE slow report stops the worker
     answering anything at all — including /health, which is what turns a slow
     report into an apparent outage and what makes the concurrency cap above
     unreachable (nothing else gets scheduled to reach it)."""
     import asyncio
+    # This guards the inline path specifically; with a queue configured the
+    # analysis happens on a worker and never reaches this box at all.
+    monkeypatch.setattr(web, "_queue_is_usable", lambda: False)
     seen = {}
     real = web._run_and_respond
 
