@@ -65,16 +65,47 @@ def _render_findings(result, out_path: str) -> str:
     from .highlights import (split_reference_findings, split_display_findings,
                              highlights_html)
 
+    from .orchestrate import cap_gwas_findings
+
     _, rest = split_reference_findings(list(result.findings or []))
     rest, _withheld = split_display_findings(rest)
+
+    # Bound the DOCUMENT, here and nowhere earlier. A 650k-variant consumer array
+    # measured 442,719 GWAS associations and rendered 495 MB of HTML: unreadable,
+    # and on a slow connection undownloadable — it is also what silently defeats
+    # the browser's own print-to-PDF. The analysis keeps every finding, and the
+    # JSON and Markdown exports carry them, so nothing is lost by trimming what one
+    # web page shows. Ranking is by p-value, so the cut keeps the best evidence.
+    gwas = [f for f in rest if (f.source or "") == "gwas_catalog"]
+    if gwas:
+        kept, cap_notes = cap_gwas_findings(gwas)
+        if len(kept) < len(gwas):
+            keep_ids = {id(f) for f in kept}
+            rest = [f for f in rest
+                    if (f.source or "") != "gwas_catalog" or id(f) in keep_ids]
+        else:
+            cap_notes = []
+    else:
+        cap_notes = []
+
     original = result.findings
+    original_notes = list(result.notes or [])
     result.findings = rest
+    # The truncation notice belongs to THIS document and must not leak into the
+    # exports, which are complete — a note saying "showing 1,000 of 442,719" on a
+    # file that contains all 442,719 is worse than no note at all.
+    result.notes = original_notes + cap_notes
     try:
         render(result, out_path)                   # bio-core findings + disclaimer
+        body = Path(out_path).read_text()
+        # notes_html reads result.notes, so the swap has to still be in place when
+        # it runs — restoring first would drop the truncation notice from the very
+        # document the truncation applies to.
+        from .scan_notes import notes_html
+        notes_section = notes_html(result)
     finally:
         result.findings = original
-
-    body = Path(out_path).read_text()
+        result.notes = original_notes
 
     def _append(html: str):
         """Put a section at the end of the document, inside <body>."""
@@ -89,10 +120,9 @@ def _render_findings(result, out_path: str) -> str:
     # What the scan covered and what it left out. The engines have always
     # produced these notes and the JSON API has always returned them; the HTML
     # report showed none of them, so a bounded report — 1,000 GWAS associations
-    # of 442,712 — was indistinguishable from a complete one to the only
+    # of 442,719 — was indistinguishable from a complete one to the only
     # audience that reads the HTML.
-    from .scan_notes import notes_html
-    _append(notes_html(result))
+    _append(notes_section)
 
     # Glossary goes at the END, after the findings it explains — the copy is
     # per-trait while findings are per-marker, so it is written once here and

@@ -366,16 +366,14 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
                 seen += 1 if gfs else 0
             # Bound the report. Nothing is filtered on scientific grounds here;
             # it is a size limit, and it says so in the report.
-            found_gwas = len(gwas)
-            gwas, cap_notes = cap_gwas_findings(gwas)
-            notes += cap_notes
-            if len(gwas) < found_gwas:
-                # Record the cut as DATA, not only as a sentence. A consumer that
-                # has to regex "showing the 1000 most significant of 442719" out of
-                # prose will get it wrong or skip it, and then report a bounded set
-                # as though it were complete — the machine-readable version of the
-                # failure the note exists to prevent.
-                limits["gwas_catalog"] = {"shown": len(gwas), "found": found_gwas}
+            # NOT capped here. The cut is a limit on what one HTML DOCUMENT can
+            # usefully hold, not a judgement about the science, so it belongs to
+            # rendering — see report._render_findings. Capping during analysis put
+            # the truncation into every output at once, including the JSON an agent
+            # reads and the archive a person downloads, which is the wrong place to
+            # decide someone cannot have their own results. Compression is what
+            # made keeping them affordable: a complete set is ~9 MB gzipped where
+            # raw it was ~178 MB.
             findings += gwas
             if seen:
                 notes.append(f"GWAS Catalog: annotated {seen} variants from the local mirror")

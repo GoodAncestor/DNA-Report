@@ -51,3 +51,22 @@ def test_truncation_is_disclosed_with_both_numbers():
 def test_the_cap_is_configurable_and_defaults_sanely():
     assert isinstance(orch.MAX_GWAS_FINDINGS, int)
     assert 0 < orch.MAX_GWAS_FINDINGS <= 20000
+
+
+# ------------------------------- the cap belongs to the document, not the data
+def test_analysis_no_longer_truncates(monkeypatch, tmp_path):
+    """The cap is a limit on what one web page can hold, not a judgement about the
+    science. Applying it during analysis put the truncation into the JSON an agent
+    reads and the archive a person downloads — deciding they cannot have their own
+    results in order to keep a page small."""
+    import inspect
+    from dnareport import orchestrate
+    src = inspect.getsource(orchestrate._run_geneask)
+    assert "cap_gwas_findings" not in src, (
+        "analysis must not cap; the HTML composer does")
+
+
+def test_the_html_composer_still_bounds_the_page():
+    from dnareport import report
+    import inspect
+    assert "cap_gwas_findings" in inspect.getsource(report._render_findings)
