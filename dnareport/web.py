@@ -1032,7 +1032,17 @@ async def analyze_inline(request: Request,
             # archive is unwrapped FIRST, so what reaches R2 is the genotype file
             # itself — a worker has no unwrap step, and shipping the .zip would
             # queue something it cannot read.
-            if _queue_is_usable():
+            #
+            # A JSON caller is deliberately NOT queued. Its contract is a result in
+            # the response, and the queued path has no JSON form at all: a worker
+            # writes HTML, and /result serves HTML, so handing back a job_id would
+            # give an integration a claim link it cannot redeem. Making the JSON
+            # surface asynchronous is a real piece of work — the worker must write a
+            # JSON artefact too, /result must content-negotiate, and the published
+            # API contract changes — and it is not something to do as a side effect
+            # of changing where analysis runs. Until then JSON stays synchronous and
+            # keeps the time ceiling it already had.
+            if _queue_is_usable() and not _wants_json(accept, format):
                 key = (f"{R2_QUEUED_PREFIX}{uuid.uuid4().hex}/"
                        f"{re.sub(r'[^A-Za-z0-9._-]', '_', display)[:120] or 'upload'}")
                 await run_in_threadpool(_r2_client().upload_file, local,

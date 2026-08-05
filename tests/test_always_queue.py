@@ -126,3 +126,18 @@ def test_the_queue_switch_can_be_turned_off():
         os.environ.pop("DNAREPORT_ALWAYS_QUEUE", None)
         importlib.reload(web)
     assert web.ALWAYS_QUEUE is True
+
+
+def test_a_json_caller_is_not_handed_a_claim_link_it_cannot_redeem(monkeypatch):
+    """The JSON surface promises a result in the response. The queued path has no
+    JSON form — a worker writes HTML and /result serves HTML — so queueing a JSON
+    caller would hand an integration a job_id with nothing to fetch."""
+    monkeypatch.setattr(web, "_queue_is_usable", lambda: True)
+    monkeypatch.setattr(web, "_enqueue_job",
+                        lambda *a, **kw: pytest.fail("a JSON caller must not be queued"))
+
+    r = client.post("/analyze?format=json", files=_files(),
+                    headers={"X-API-Key": "no-such-key"})
+
+    # 401/403 (key gate) is fine — what must NOT happen is a queued job
+    assert r.status_code != 200 or "job_id" not in r.text
