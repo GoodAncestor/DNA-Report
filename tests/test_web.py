@@ -24,9 +24,12 @@ def test_health_reports_build_identity():
     # /health is how a deploy is confirmed, so the keys must always be present:
     # a missing key reads as "old image" and would send an operator debugging a
     # deploy that worked. Unstamped outside a built image, hence "unknown" here.
+    # Assert the keys are PRESENT and populated, not their value: this suite also
+    # runs inside the deployed container, where they carry the real build stamp.
+    # Pinning them to "unknown" made the test pass only where it was least useful.
     body = client.get("/health").json()
-    assert body["commit"] == "unknown"
-    assert body["built"] == "unknown"
+    assert body.get("commit")
+    assert body.get("built")
 
 
 def test_small_beta_matrix_is_inline():

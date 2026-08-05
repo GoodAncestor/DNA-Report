@@ -70,7 +70,11 @@ def test_analyze_r2_rejects_an_empty_key():
 @pytest.mark.skipif(not os.environ.get("R2_ENDPOINT"),
                     reason="no object store configured in this environment")
 def test_sign_mints_its_own_key_and_ignores_caller_paths():
-    r = _sign(filename="../../etc/passwd", size=10)
+    # The filename must be a format we ACCEPT, or the extension gate answers 415
+    # first and this never reaches the property it is testing: that a caller
+    # cannot influence the key. "../../etc/passwd" is refused for being an
+    # unsupported format, which looks like a pass and proves nothing.
+    r = _sign(filename="../../etc/passwd.vcf", size=10)
     assert r.status_code == 200
     key = r.json()["key"]
     assert key.startswith(web.R2_INLINE_PREFIX)
