@@ -25,9 +25,18 @@ from pathlib import Path
 
 _TIER_ORDER = {"robust": 0, "moderate": 1, "speculative": 2, "unknown": 3}
 
+#: Bumped whenever the Markdown's STRUCTURE changes — headings, front-matter keys,
+#: ordering. Prose edits do not move it. It exists so an agent parsing this file
+#: can refuse a shape it does not know instead of silently mis-reading one.
+MARKDOWN_FORMAT_VERSION = "1.0"
+
 
 def report_json(result, marker_url=None) -> str:
-    """The structured report, as a JSON string."""
+    """The structured report, as a JSON string.
+
+    The `summary` block carries the whole-report account, including whether the
+    report is bounded — see serialize.report_summary.
+    """
     from .serialize import result_to_json
     return json.dumps(result_to_json(result, marker_url=marker_url),
                       indent=2, sort_keys=False)
@@ -60,8 +69,33 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     or a screen that did not run changes what the list below means, and a reader
     scrolling a long document would meet it last or not at all.
     """
-    out: list[str] = [f"# {title}", ""]
+    from .serialize import report_summary
+    sm = report_summary(result)
     kind = getattr(result.kind, "value", str(result.kind))
+
+    # YAML front matter. Agents are a first-class reader of this file, and prose
+    # headings are not a contract — reword one and every consumer breaks silently.
+    # These keys are, so a reader can get the shape of the report, and crucially
+    # whether it is COMPLETE, without parsing a word of the body.
+    fm = [
+        "---",
+        f"format: dna-report-markdown/{MARKDOWN_FORMAT_VERSION}",
+        f"input_kind: {kind}",
+        f"findings: {len(result.findings)}",
+        f"bounded: {'true' if sm['bounded'] else 'false'}",
+    ]
+    if filename:
+        fm.append(f"file: {json.dumps(filename)}")
+    if result.tissue:
+        fm.append(f"tissue: {result.tissue}")
+    if sm["limits"]:
+        fm.append("limits:")
+        for src, lim in sorted(sm["limits"].items()):
+            fm.append(f"  {src}: {{shown: {lim.get('shown')}, "
+                      f"found: {lim.get('found')}}}")
+    fm += ["---", ""]
+
+    out: list[str] = fm + [f"# {title}", ""]
     head = [f"Input type: `{kind}`"]
     if filename:
         head.append(f"File: `{filename}`")
@@ -69,6 +103,38 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     if result.tissue:
         head.append(f"Tissue: {result.tissue}")
     out += ["  \n".join(head), ""]
+
+    # The summary comes first because this file is routinely longer than anything
+    # that will be read whole — by a person or by a model with a context limit.
+    out += ["## Summary", ""]
+    if sm["bounded"]:
+        for src, lim in sorted(sm["limits"].items()):
+            out.append(f"> **This report is bounded.** It shows "
+                       f"{lim.get('shown'):,} of {lim.get('found'):,} "
+                       f"{src.replace('_', ' ')} associations — the strongest by "
+                       f"p-value. Do not read the counts below as a complete "
+                       f"account.")
+        out.append("")
+    if sm["by_tier"]:
+        out.append("- By strength of evidence: " + ", ".join(
+            f"{k} {v:,}" for k, v in sorted(sm["by_tier"].items())))
+    if sm["by_topic"]:
+        out.append("- By topic: " + ", ".join(
+            f"{k} {v:,}" for k, v in sorted(sm["by_topic"].items())))
+    if sm["databases"]:
+        out.append("- Screened against: " + ", ".join(sm["databases"]))
+    out.append("")
+    if sm["strongest"]:
+        # Ranked by the same score the report itself uses. This is "strongest
+        # evidence", NOT "most important for you" — the second is a clinical
+        # judgement and nothing here is entitled to make it.
+        out += ["**Strongest evidence in this report** (by the same ranking the "
+                "report uses — this is not a clinical priority order):", ""]
+        for t in sm["strongest"]:
+            gene = f"{t['gene']} — " if t.get("gene") and t["gene"] != "?" else ""
+            out.append(f"1. {gene}{t['description']} "
+                       f"_(tier {t['tier']}, magnitude {t['magnitude']})_")
+        out.append("")
 
     st = result.scan_stats or {}
     if st:

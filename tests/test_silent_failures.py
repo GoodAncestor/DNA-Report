@@ -20,8 +20,8 @@ def test_an_unparseable_genotype_export_says_so(monkeypatch):
         raise ValueError("column 4 is not a genotype")
     monkeypatch.setattr(parsers, "parse_file", boom)
 
-    findings, notes = _run_geneask("/tmp/whatever.txt",
-                                   InputKind.ARRAY_GENOTYPE)
+    findings, notes, _limits = _run_geneask("/tmp/whatever.txt",
+                                            InputKind.ARRAY_GENOTYPE)
 
     assert findings == []
     assert any("could not be parsed" in n for n in notes), notes
@@ -36,7 +36,8 @@ def test_an_export_with_no_genotype_rows_says_so(monkeypatch):
         notes = []
     monkeypatch.setattr(parsers, "parse_file", lambda path: Empty())
 
-    findings, notes = _run_geneask("/tmp/whatever.txt", InputKind.ARRAY_GENOTYPE)
+    findings, notes, _limits = _run_geneask("/tmp/whatever.txt",
+                                            InputKind.ARRAY_GENOTYPE)
 
     assert findings == []
     assert any("no genotype rows" in n for n in notes), notes
@@ -53,7 +54,8 @@ def test_a_readable_export_gains_no_apology(monkeypatch):
         notes = []
     monkeypatch.setattr(parsers, "parse_file", lambda path: Parsed())
 
-    _findings, notes = _run_geneask("/tmp/whatever.txt", InputKind.ARRAY_GENOTYPE)
+    _findings, notes, _limits = _run_geneask("/tmp/whatever.txt",
+                                             InputKind.ARRAY_GENOTYPE)
 
     assert not any("could not be parsed" in n for n in notes), notes
     assert not any("no genotype rows" in n for n in notes), notes

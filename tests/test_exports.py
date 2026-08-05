@@ -112,3 +112,51 @@ def test_an_empty_result_still_serialises():
     doc = json.loads(report_json(_result(findings=[])))
     assert doc["summary"]["n_findings"] == 0
     assert doc["findings"] == []
+
+
+# ------------------------------------------------------- summary + front matter
+def test_front_matter_states_the_shape_without_reading_the_body():
+    """Prose headings are not a contract; these keys are. An agent must be able to
+    learn what this report is, and whether it is complete, without parsing text."""
+    md = report_markdown(_result())
+    head = md.split("---")[1]
+    assert "format: dna-report-markdown/" in head
+    assert "input_kind: vcf" in head
+    assert "findings: 1" in head
+    assert "bounded: false" in head
+
+
+def test_a_bounded_report_says_so_in_the_front_matter_and_the_body():
+    md = report_markdown(_result(
+        stats={"limits": {"gwas_catalog": {"shown": 1000, "found": 442719}}}))
+
+    head = md.split("---")[1]
+    assert "bounded: true" in head
+    assert "shown: 1000" in head and "found: 442719" in head
+    assert "This report is bounded" in md
+    assert "1,000 of 442,719" in md
+
+
+def test_the_summary_precedes_everything_it_qualifies():
+    md = report_markdown(_result())
+    assert md.index("## Summary") < md.index("## Findings")
+
+
+def test_the_ranking_does_not_claim_clinical_priority():
+    """Ranking by evidence is defensible; ranking by importance-to-you is a
+    clinical judgement this system is not entitled to make."""
+    md = report_markdown(_result())
+    assert "Strongest evidence" in md
+    assert "not a clinical priority order" in md
+
+
+def test_the_summary_is_the_same_object_the_json_carries():
+    """One summary. Two would be two things that can disagree about one genome."""
+    from dnareport.serialize import report_summary
+    r = _result(stats={"limits": {"gwas_catalog": {"shown": 5, "found": 90}}})
+    sm = report_summary(r)
+    doc = json.loads(report_json(r))
+
+    assert doc["summary"]["bounded"] is True
+    assert doc["summary"]["limits"] == sm["limits"]
+    assert "summary_v2" not in doc          # never two summary blocks

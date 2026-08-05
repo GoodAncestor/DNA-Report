@@ -11,6 +11,7 @@ The linkout URLs are computed the same way the renderer does (marker/gene/
 protein resolvers), so JSON and HTML agree on where an entity points.
 """
 from __future__ import annotations
+import os
 
 # 1.1 adds `magnitude` and `direction` per finding and `by_direction` to the
 # summary. 1.2 adds `scan_stats`: what was scanned and what was left out. Without
@@ -40,6 +41,71 @@ def _direction(f) -> str | None:
     except ImportError:
         return None
     return direction(f)
+
+
+#: How many of the strongest findings the summary names. Enough to orient a
+#: reader (or a model) without becoming the report again.
+SUMMARY_TOP_N = int(os.environ.get("DNAREPORT_SUMMARY_TOP_N", "10"))
+
+
+def report_summary(result, *, top_n: int = None) -> dict:
+    """A short, structured account of the whole report.
+
+    This exists because the report is often far too big to read whole — a consumer
+    array yields hundreds of thousands of associations — and because the most
+    likely thing anyone does with the export is hand it to a model and ask what
+    matters. Without a summary the model sees whatever fits in its context, which
+    is the head of an arbitrarily ordered list.
+
+    The strongest findings are ranked by bio-core's existing `magnitude` score, the
+    same one the HTML report uses. That is deliberate: "strongest evidence first"
+    is a claim this system can defend, and inventing a separate what-matters-most
+    ranking here would be a clinical judgement dressed as a summary field.
+
+    `bounded` and `limits` say whether the report is a complete account or a
+    truncated one, so a reader that only ever sees this summary is still told.
+    """
+    top_n = SUMMARY_TOP_N if top_n is None else top_n
+    # getattr throughout: this is also called with the lighter result objects the
+    # CLI and the tests build, which carry findings but not every field.
+    st = getattr(result, "scan_stats", None) or {}
+    limits = dict(st.get("limits") or {})
+    findings = list(getattr(result, "findings", None) or [])
+
+    tiers: dict[str, int] = {}
+    topics: dict[str, int] = {}
+    for f in findings:
+        tiers[f.tier.value] = tiers.get(f.tier.value, 0) + 1
+        t = (f.detail or {}).get("topic", "other")
+        topics[t] = topics.get(t, 0) + 1
+
+    top = []
+    for f in sorted(findings, key=lambda f: _magnitude(f) or 0.0,
+                    reverse=True)[:top_n]:
+        d = f.detail or {}
+        top.append({"marker": f.marker, "gene": d.get("gene"),
+                    "description": f.description, "tier": f.tier.value,
+                    "magnitude": _magnitude(f), "source": f.source})
+
+    return {
+        "input_kind": getattr(getattr(result, "kind", ""), "value",
+                              str(getattr(result, "kind", ""))),
+        "n_findings": len(findings),
+        "n_markers": len({f.marker for f in findings}),
+        "by_tier": tiers,
+        "by_topic": topics,
+        "clocks": [{"clock": c.clock, "age": c.age,
+                    "valid": getattr(c, "valid", c.age is not None)}
+                   for c in (getattr(result, "clocks", None) or [])],
+        # The two fields a consumer must read before trusting any count above.
+        "bounded": bool(limits),
+        "limits": limits,
+        "databases": list(st.get("local_dbs_queried") or []),
+        "markers_scanned": st.get("markers_scanned"),
+        "strongest": top,
+        "caveats": list(getattr(result, "notes", None) or []),
+    }
+
 
 
 def _finding_json(f, marker_url) -> dict:
@@ -108,12 +174,18 @@ def result_to_json(result, marker_url=None) -> dict:
         "input_kind": getattr(result.kind, "value", str(result.kind)),
         "tissue": result.tissue,
         "engines": list(result.engines),
+        # ONE summary. It carries the counts AND the whole-report account —
+        # `bounded`, `limits`, `strongest` — because two summary blocks in one
+        # document are two things that can disagree about the same genome.
         "summary": {
             "n_findings": len(findings),
             "n_markers": len({f["marker"] for f in findings}),
             "by_topic": dict(topics),
             "by_tier": dict(tiers),
             "by_direction": dict(directions),
+            **{k: v for k, v in report_summary(result).items()
+               if k in ("bounded", "limits", "strongest", "databases",
+                        "markers_scanned", "clocks", "input_kind")},
         },
         "clocks": [_clock_json(c) for c in result.clocks],
         "findings": findings,

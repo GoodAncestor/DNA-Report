@@ -260,6 +260,7 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     """
     findings = []
     notes: list[str] = []
+    limits: dict[str, dict] = {}     # what was capped, as data — see the GWAS cut
     is_array = kind in (InputKind.ARRAY_GENOTYPE, InputKind.TWENTYTHREE_AND_ME)
 
     # array formats have no REF/ALT and vary in genome build, so parse once and
@@ -365,8 +366,16 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
                 seen += 1 if gfs else 0
             # Bound the report. Nothing is filtered on scientific grounds here;
             # it is a size limit, and it says so in the report.
+            found_gwas = len(gwas)
             gwas, cap_notes = cap_gwas_findings(gwas)
             notes += cap_notes
+            if len(gwas) < found_gwas:
+                # Record the cut as DATA, not only as a sentence. A consumer that
+                # has to regex "showing the 1000 most significant of 442719" out of
+                # prose will get it wrong or skip it, and then report a bounded set
+                # as though it were complete — the machine-readable version of the
+                # failure the note exists to prevent.
+                limits["gwas_catalog"] = {"shown": len(gwas), "found": found_gwas}
             findings += gwas
             if seen:
                 notes.append(f"GWAS Catalog: annotated {seen} variants from the local mirror")
@@ -467,7 +476,7 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     # surface build/liftover handling to the report (parsed.notes set by the converter)
     if parsed is not None:
         notes += parsed.notes
-    return findings, notes
+    return findings, notes, limits
 
 
 def _run_modbam_methylation(path: str, *, reference_fasta: str | None = None):
@@ -553,6 +562,7 @@ def analyze(path: str, *, trait_table: str | None = None,
 
     # engines read `work`, which is `path` except for a plain-gzip VCF; scan_stats
     # keeps `path` so the report states the size of what the user actually uploaded.
+    limits: dict[str, dict] = {}
     with _pysam_readable(path, kind, result) as work:
         if "methylask" in engines:
             try:
@@ -565,13 +575,15 @@ def analyze(path: str, *, trait_table: str | None = None,
 
         if "geneask" in engines:
             try:
-                f, gnotes = _run_geneask(work, kind, trait_table=trait_table)
+                f, gnotes, glimits = _run_geneask(work, kind, trait_table=trait_table)
                 result.findings += f
                 result.notes += gnotes
+                limits.update(glimits)
             except ImportError as e:
                 result.notes.append(f"GeneAsk not installed: {e}")
 
     result.scan_stats = _scan_stats(path, result)
+    result.scan_stats["limits"] = limits
     return result
 
 
