@@ -82,3 +82,54 @@ def test_elapsed_reads_as_time_not_seconds():
     assert _elapsed(3900) == "1 hour 5 minutes"
     assert _elapsed(7200) == "2 hours"
     assert _elapsed(None) == ""
+
+
+# ---------------------------------------------------------------- exports
+def test_the_claim_link_serves_markdown(monkeypatch):
+    monkeypatch.setattr(web, "_r2_result_html",
+                        lambda job, fmt="html": "# DNA-Report\n" if fmt == "md" else None)
+    job = _job()
+    r = client.get(f"/result/{job}?format=md")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/markdown")
+    assert f'{job}.md' in r.headers["content-disposition"]
+    assert r.text.startswith("# DNA-Report")
+
+
+def test_the_claim_link_serves_json(monkeypatch):
+    monkeypatch.setattr(web, "_r2_result_html",
+                        lambda job, fmt="html": '{"schema_version": "1.2"}'
+                        if fmt == "json" else None)
+    r = client.get(f"/result/{_job()}?format=json")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.json()["schema_version"] == "1.2"
+
+
+def test_an_agent_can_ask_by_accept_header(monkeypatch):
+    """Someone else's agent should not have to know about a query parameter."""
+    seen = {}
+
+    def fake(job, fmt="html"):
+        seen["fmt"] = fmt
+        return "{}" if fmt == "json" else None
+    monkeypatch.setattr(web, "_r2_result_html", fake)
+
+    client.get(f"/result/{_job()}", headers={"Accept": "application/json"})
+    assert seen["fmt"] == "json"
+
+
+def test_an_explicit_format_beats_the_accept_header(monkeypatch):
+    """A browser sends a long Accept list it did not choose; ?format= is always
+    deliberate."""
+    assert web._requested_format("md", "application/json") == "md"
+    assert web._requested_format("", "application/json") == "json"
+    assert web._requested_format("", "text/html,*/*") == "html"
+
+
+def test_a_missing_export_does_not_masquerade_as_a_missing_report(monkeypatch):
+    """If only the JSON is absent, the caller must not be told the job is still
+    running for ever — it falls through to the same waiting/overdue logic."""
+    monkeypatch.setattr(web, "_r2_result_html", lambda job, fmt="html": None)
+    r = client.get(f"/result/{_job()}?format=json")
+    assert r.status_code in (202, 500, 504)

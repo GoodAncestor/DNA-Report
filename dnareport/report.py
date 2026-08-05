@@ -114,8 +114,32 @@ def _render_findings(result, out_path: str) -> str:
     return out_path
 
 
+_EXPORT_HTML = """
+<section class="exports" style="margin:38px auto 0;max-width:900px;padding:0 20px;
+  font:14px/1.6 system-ui,sans-serif">
+  <p style="font:11px/1 var(--mono,monospace);letter-spacing:.06em;
+    text-transform:uppercase;color:var(--faint,#888);margin:0 0 10px">Export</p>
+  <p style="margin:0 0 10px">Take this report with you. Both files are the same
+    analysis as the page above, produced at the same moment.</p>
+  <p style="margin:0"><a href="/result/{job}?format=md" download>Markdown</a>
+    &nbsp;&middot;&nbsp; <a href="/result/{job}?format=json" download>JSON</a>
+    &nbsp;&middot;&nbsp; use your browser's Print to save a PDF.</p>
+</section>
+"""
+
+
+def export_links_html(job_id: str) -> str:
+    """The export block appended to a claimable report.
+
+    Only rendered when there IS a claim link: an inline report is returned in the
+    response body and has no URL of its own, so the links would point nowhere.
+    """
+    return _EXPORT_HTML.format(job=job_id) if job_id else ""
+
+
 def render_report(result, out_path: str, *, filename: str = "",
-                  scratch: str = "", kind_label: str | None = None) -> str:
+                  scratch: str = "", kind_label: str | None = None,
+                  claim_id: str = "") -> str:
     """Write the document for `result` to `out_path`; return `out_path`.
 
     A result with nothing in it is still a result. It gets the empty-report page —
@@ -131,9 +155,68 @@ def render_report(result, out_path: str, *, filename: str = "",
                                              getattr(result.kind, "value", "Unrecognised"))
         Path(out_path).write_text(pages.empty_report_page(
             kind_label=label, filename=filename,
-            notes=display_notes(result, scratch, filename)))
+            notes=display_notes(result, scratch, filename))
+            + export_links_html(claim_id))
         return out_path
-    return _render_findings(result, out_path)
+    _render_findings(result, out_path)
+    # Exports are offered on the report itself, where someone is looking at the
+    # thing they want to keep — a claim link they have to construct by hand is a
+    # feature only its author knows about.
+    if claim_id:
+        body = Path(out_path).read_text()
+        block = export_links_html(claim_id)
+        body = (body.replace("</body>", block + "\n</body>", 1)
+                if "</body>" in body else body + block)
+        Path(out_path).write_text(body)
+    return out_path
+
+
+#: Every format a finished report is published in. The HTML is what a claim link
+#: serves by default; the other two are exports.
+EXPORT_FORMATS = ("html", "json", "md")
+
+_CONTENT_TYPE = {"html": "text/html; charset=utf-8",
+                 "json": "application/json",
+                 "md": "text/markdown; charset=utf-8"}
+
+
+def content_type(fmt: str) -> str:
+    return _CONTENT_TYPE.get(fmt, "application/octet-stream")
+
+
+def render_exports(result, out_dir: str, job_id: str, *, filename: str = "",
+                   scratch: str = "", kind_label: str | None = None) -> dict:
+    """Write every published format for one result. Returns {fmt: path}.
+
+    All three come from the SAME ReportResult in the same pass. Regenerating an
+    export later, from a separate run, would let a person's HTML report and their
+    JSON disagree about their own genome — the analysis touches live sources and
+    is not guaranteed to be identical twice.
+    """
+    from .exports import report_json, report_markdown
+    from .orchestrate import _marker_url
+
+    paths = {}
+    html = os.path.join(out_dir, f"{job_id}.html")
+    render_report(result, html, filename=filename, scratch=scratch,
+                  kind_label=kind_label, claim_id=job_id)
+    paths["html"] = html
+
+    js = os.path.join(out_dir, f"{job_id}.json")
+    Path(js).write_text(report_json(result, marker_url=_marker_url))
+    paths["json"] = js
+
+    md = os.path.join(out_dir, f"{job_id}.md")
+    # Notes are sanitised for the same reason as in the HTML: an engine note can
+    # interpolate the server-side scratch path it was handed.
+    safe = display_notes(result, scratch, filename)
+    original, result.notes = result.notes, safe
+    try:
+        Path(md).write_text(report_markdown(result, filename=filename))
+    finally:
+        result.notes = original
+    paths["md"] = md
+    return paths
 
 
 def report_html(result, *, filename: str = "", scratch: str = "",

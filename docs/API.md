@@ -72,6 +72,31 @@ Poll `GET /result/{job_id}`: `202` while it is still running, `200` with the
 report when it is done. The job id is the only credential on that URL — anyone
 holding it can read the report.
 
+Two other answers are possible and both are final, so stop polling on either:
+`500` when the job failed outright (the body names the recorded error) and `504`
+when it has gone so long without producing a report that it is treated as never
+coming. Neither is a transient state to retry through.
+
+### Getting the report as data
+
+The same claim link serves three formats, all written by the worker in one pass
+from one analysis — so the JSON and the page can never disagree about a genome:
+
+| Request | You get |
+|---|---|
+| `GET /result/{job_id}` | the HTML report |
+| `GET /result/{job_id}?format=json` | the structured report |
+| `GET /result/{job_id}?format=md` | Markdown |
+
+`Accept: application/json` works too, though an explicit `?format=` wins over it.
+**No API key is needed** — the job id is the capability, exactly as it is for the
+page, so a report's owner can read it with their own tools.
+
+This is the endpoint to build an agent against. The synchronous JSON on
+`/analyze?format=json` still exists and is unchanged, but it runs the analysis
+while your connection waits and is therefore bounded by the edge's ~100s ceiling;
+a whole genome will not finish inside it.
+
 **Honour the `Retry-After` on the 202 and do not poll faster than it says.** The
 edge's managed security rules treat rapid repeat requests from one address as
 abuse and answer with a challenge, which a browser can solve and your client
@@ -90,10 +115,16 @@ answers `429` with your key named in its own counters; the edge answers `403`.
 
 ## Response
 
-`200` with a versioned object. `schema_version` is currently `1.1`; additions are
+`200` with a versioned object. `schema_version` is currently `1.2`; additions are
 made without a major bump, so read fields by name rather than assuming a shape.
 Findings carry `marker`, `description`, `tier`, `magnitude` (0-10),
 `direction` where the source asserts one, and resolved `links`.
+
+**Read `scan_stats` and `notes` before you trust a count.** A report can be
+bounded — a consumer array commonly yields hundreds of thousands of GWAS
+associations and the report carries the strongest 1,000 — and those two fields
+are where that is stated. A consumer that ignores them will report a truncated
+set as though it were complete.
 
 Errors carry a structured body:
 

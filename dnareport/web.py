@@ -58,14 +58,16 @@ import os, re, sys, json, uuid, shutil, tempfile, contextlib, html as _html
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
+                               Response)
 from fastapi.concurrency import run_in_threadpool
 
 from . import __version__
 from .detect import detect, InputKind
 from .tiering import job_tier, queue_enabled, QUEUED
 from .orchestrate import analyze, compare, _marker_url, _scan_stats
-from .report import KIND_LABEL as _KIND_LABEL, render_report, report_html
+from .report import (KIND_LABEL as _KIND_LABEL, render_report, report_html,
+                     content_type as report_content_type)
 from .tissue import infer_tissue
 from .landing import LANDING_HTML
 from .serialize import result_to_json
@@ -175,15 +177,16 @@ def _r2_client():
     return boto3.client("s3", endpoint_url=R2_ENDPOINT, region_name="auto",
                         config=Config(signature_version="s3v4"))
 
-def _r2_result_html(job_id: str) -> str | None:
+def _r2_result_html(job_id: str, fmt: str = "html") -> str | None:
     """Fetch a worker-produced report from the R2 results bucket, or None if it
-    isn't there yet / R2 isn't configured."""
+    isn't there yet / R2 isn't configured. `fmt` selects the published format —
+    the worker writes html, json and md for every job."""
     if not R2_ENDPOINT:
         return None
     try:
         import boto3
         s3 = boto3.client("s3", endpoint_url=R2_ENDPOINT)   # creds from env
-        obj = s3.get_object(Bucket=R2_RESULTS_BUCKET, Key=f"{job_id}.html")
+        obj = s3.get_object(Bucket=R2_RESULTS_BUCKET, Key=f"{job_id}.{fmt}")
         return obj["Body"].read().decode("utf-8", "replace")
     except Exception as e:
         # "not there yet" is the normal case while a worker is still running the
@@ -1163,8 +1166,30 @@ def _job_dead_lettered(job_id: str) -> str | None:
     return None
 
 
+def _requested_format(fmt: str, accept: str) -> str:
+    """Which published format a claim link is being asked for.
+
+    Explicit `?format=` wins over Accept, because Accept is often set by something
+    other than the caller (a browser sends a long list) while the query string is
+    always deliberate.
+    """
+    f = (fmt or "").strip().lower()
+    if f in ("md", "markdown"):
+        return "md"
+    if f == "json":
+        return "json"
+    if f == "html":
+        return "html"
+    a = (accept or "").lower()
+    if "application/json" in a:
+        return "json"
+    if "text/markdown" in a:
+        return "md"
+    return "html"
+
+
 @app.get("/result/{job_id}")
-def result(job_id: str):
+def result(job_id: str, format: str = "", accept: str = Header(default="")):
     """Serve a finished report by its claim link. While the worker is still
     running the job, return a friendly self-refreshing 'processing' page (HTTP
     202) rather than a bare error — the user can bookmark this URL and come back;
@@ -1174,11 +1199,23 @@ def result(job_id: str):
         raise HTTPException(status_code=404, detail="unknown job")
     # worker-produced report in R2 (a worker runs off-box); then the local inline
     # path's disk; else it's still being worked -> friendly 202 page.
-    r2_html = _r2_result_html(job_id)
-    if r2_html is not None:
-        return HTMLResponse(r2_html)
+    #
+    # The claim link is the capability: a 32-hex token nobody can guess. The
+    # exports are therefore served on the same terms as the page — gating JSON
+    # behind an API key here would mean the owner of a report could read it in a
+    # browser but not with their own tools, and the point of the JSON is that
+    # someone else's agent can consume it.
+    fmt = _requested_format(format, accept)
+    body = _r2_result_html(job_id, fmt)
+    if body is not None:
+        headers = {}
+        if fmt != "html":
+            # A download rather than a wall of text in the browser.
+            headers["Content-Disposition"] = f'attachment; filename="{job_id}.{fmt}"'
+        return Response(content=body, media_type=report_content_type(fmt),
+                        headers=headers)
     out = os.path.join(RESULT_DIR, f"{job_id}.html")
-    if os.path.exists(out):
+    if fmt == "html" and os.path.exists(out):
         return HTMLResponse(Path(out).read_text())
     # No report yet. Three different situations used to be presented identically,
     # as a 202 behind a page that refreshed for ever — so a job that had failed,
