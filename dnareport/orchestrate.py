@@ -645,14 +645,28 @@ def _disclaimer_path() -> str:
 def _marker_url(marker: str) -> str | None:
     """Map a marker id to a public record (product-level domain knowledge; kept
     out of organism-agnostic bio-core). CpG probe -> EWAS Catalog; rsID -> dbSNP;
-    chrom:pos -> UCSC browser."""
+    chrom:pos and chrom-pos-ref-alt -> UCSC browser."""
     m = marker.strip()
-    if m[:2] in ("cg", "ch"):
+    if not m:
+        return None
+    # Illumina probe ids: 'cg…' for CpG, 'ch.2.2242072R' for non-CpG. Matching a
+    # bare 'ch' prefix also swallowed every 'chr…' marker, which sent genome
+    # coordinates to the methylation catalogue and left the UCSC branch below
+    # unreachable. The dot is what distinguishes a probe from a chromosome.
+    if m.startswith("cg") or m.startswith("ch."):
         return f"https://www.ewascatalog.org/?query={m}"
     if m.startswith("rs") and m[2:].isdigit():
         return f"https://www.ncbi.nlm.nih.gov/snp/{m}"
     if m.startswith("chr") and ":" in m:
         return f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg38&position={m}"
+    # 'chrom-pos-ref-alt', the callset/ClinVar key every genome finding carries.
+    # Only chrom and pos are used: the allele fields are free text (an indel
+    # carries whole sequences) and the browser locates by position anyway.
+    parts = m.split("-")
+    if len(parts) >= 3 and parts[1].isdigit():
+        chrom = parts[0] if parts[0].startswith("chr") else f"chr{parts[0]}"
+        return ("https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg38"
+                f"&position={chrom}:{parts[1]}-{parts[1]}")
     return None
 
 
