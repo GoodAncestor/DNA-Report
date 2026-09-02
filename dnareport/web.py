@@ -578,6 +578,26 @@ def _check_api_key(x_api_key: str, key_q: str) -> str:
     return label
 
 
+_ADMIN_EXPLAIN = {"codex_cli", "claude_cli"}
+
+
+def explain_backend_for(key_label: str, requested: str) -> str | None:
+    """Return an allowed CLI backend for an administrator-labelled key."""
+    if key_label == "admin" and requested in _ADMIN_EXPLAIN:
+        return requested
+    return None
+
+
+def _requested_explain_backend(
+    requested: str, x_api_key: str = "", key_q: str = ""
+) -> str | None:
+    """Authenticate a CLI request without putting its API key on the job."""
+    if requested not in _ADMIN_EXPLAIN:
+        return None
+    label = _check_api_key(x_api_key, key_q)
+    return explain_backend_for(label, requested)
+
+
 def _run_and_respond(local, tissue, filename="", *, want_json=False,
                      x_api_key="", key_q=""):
     """Shared path for uploads and demos: detect, gate heavy kinds, run, then
@@ -627,6 +647,9 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
         res = compare(local) if n >= 2 else analyze(local, tissue=tissue)
     else:
         res = analyze(local, tissue=tissue)
+
+    from .explain import explain_promoted
+    explain_promoted(res, cache_only=True)
 
     if want_json:
         _check_api_key(x_api_key, key_q)
@@ -806,7 +829,8 @@ async def upload_sign(request: Request):
 
 
 def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
-                 notify_email: str = "", newsletter: bool = False) -> str:
+                 notify_email: str = "", newsletter: bool = False,
+                 explain_backend: str | None = None) -> str:
     """Push a heavy job and return its id. Shared by /enqueue (called by the
     Cloudflare Worker) and the presigned multipart flow (where the app completes
     the upload itself and there is no Worker in the path at all)."""
@@ -814,7 +838,13 @@ def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
     if q is None:
         raise HTTPException(status_code=503, detail="no queue backend configured")
     job_id = uuid.uuid4().hex
-    job = {"job_id": job_id, "r2_key": r2_key, "kind": kind, "n_samples": n_samples}
+    job = {
+        "job_id": job_id,
+        "r2_key": r2_key,
+        "kind": kind,
+        "n_samples": n_samples,
+        "explain_backend": explain_backend,
+    }
     email = (notify_email or "").strip()
     if email and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         job["notify_email"] = email
@@ -945,7 +975,12 @@ async def multipart_complete(request: Request):
 
 
 @app.post("/analyze/r2")
-async def analyze_r2(request: Request):
+async def analyze_r2(
+    request: Request,
+    explain: str = "",
+    x_api_key: str = Header(default=""),
+    api_key: str = "",
+):
     """Analyse an object the browser just PUT to R2, and answer with the report.
 
     With a queue configured this hands the object to a worker and answers with a
@@ -990,7 +1025,10 @@ async def analyze_r2(request: Request):
     # is — the worker pulls it from R2 itself and deletes it when done — so this
     # must NOT fall through to the cleanup below.
     if _queue_is_usable():
-        job_id = _enqueue_job(key, _advisory_kind(key))
+        backend = _requested_explain_backend(explain, x_api_key, api_key)
+        job_id = _enqueue_job(
+            key, _advisory_kind(key), explain_backend=backend
+        )
         return _queued_response(job_id)
 
     scratch = tempfile.mkdtemp(prefix="dnr-r2-")
@@ -1168,7 +1206,13 @@ async def analyze_inline(request: Request,
 
 
 @app.post("/enqueue")
-def enqueue(payload: dict, authorization: str = Header(default="")):
+def enqueue(
+    payload: dict,
+    authorization: str = Header(default=""),
+    explain: str = "",
+    x_api_key: str = Header(default=""),
+    api_key: str = "",
+):
     """Called by the R2 upload Worker (not reviewers). Push a heavy job."""
     if not ENQUEUE_TOKEN or authorization != f"Bearer {ENQUEUE_TOKEN}":
         raise HTTPException(status_code=401, detail="bad enqueue token")
@@ -1176,10 +1220,15 @@ def enqueue(payload: dict, authorization: str = Header(default="")):
     # ONLY to be notified their report is ready, and SEPARATELY opt in to the
     # newsletter. The two are independent — an email for delivery is never added
     # to a mailing list unless `newsletter` is also true. Both default off.
-    job_id = _enqueue_job(payload["r2_key"], payload["kind"],
-                          payload.get("n_samples", 1),
-                          payload.get("notify_email") or "",
-                          payload.get("newsletter"))
+    backend = _requested_explain_backend(explain, x_api_key, api_key)
+    job_id = _enqueue_job(
+        payload["r2_key"],
+        payload["kind"],
+        payload.get("n_samples", 1),
+        payload.get("notify_email") or "",
+        payload.get("newsletter"),
+        explain_backend=backend,
+    )
     return {"job_id": job_id, "status": "queued"}
 
 
