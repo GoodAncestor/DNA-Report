@@ -612,6 +612,11 @@ def analyze(path: str, *, trait_table: str | None = None,
             except ImportError as e:
                 result.notes.append(f"GeneAsk not installed: {e}")
 
+    try:
+        from methylask.aggregate import aggregate_by_trait
+        result.findings = aggregate_by_trait(result.findings, tissue)
+    except ImportError:
+        pass
     _interpret_and_promote(result)
     prior_limits = dict(result.scan_stats.get("limits") or {})
     result.scan_stats = _scan_stats(path, result)
