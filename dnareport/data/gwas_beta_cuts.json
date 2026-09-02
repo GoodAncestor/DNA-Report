@@ -1,0 +1,7 @@
+{
+ "version": "1",
+ "reviewed_by": [],
+ "reviewed_on": null,
+ "_note": "Trait-specific |beta| cuts (lower-cased trait -> cut) above which a carried, genome-wide-significant beta effect is promoted. Empty until a reviewed cut exists; beta effects do not promote while empty.",
+ "rows": {}
+}
