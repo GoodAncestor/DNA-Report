@@ -96,7 +96,10 @@ def _render_findings(result, out_path: str) -> str:
     if gwas:
         kept, cap_notes = cap_gwas_findings(gwas)
         if len(kept) < len(gwas):
-            keep_ids = {id(f) for f in kept}
+            # A promoted finding is never trimmed by the page bound: the cut is a
+            # presentation limit, and "read this first" is the one thing it must
+            # not hide.
+            keep_ids = {id(f) for f in kept} | {id(f) for f in (result.read_first or [])}
             rest = [f for f in rest
                     if (f.source or "") != "gwas_catalog" or id(f) in keep_ids]
         else:
@@ -106,7 +109,10 @@ def _render_findings(result, out_path: str) -> str:
 
     original = result.findings
     original_notes = list(result.notes or [])
+    original_first = list(getattr(result, "read_first", None) or [])
     result.findings = rest
+    rest_ids = {id(f) for f in rest}
+    result.read_first = [f for f in original_first if id(f) in rest_ids]
     # The truncation notice belongs to THIS document and must not leak into the
     # exports, which are complete — a note saying "showing 1,000 of 442,719" on a
     # file that contains all 442,719 is worse than no note at all.
@@ -122,6 +128,7 @@ def _render_findings(result, out_path: str) -> str:
     finally:
         result.findings = original
         result.notes = original_notes
+        result.read_first = original_first
 
     def _append(html: str):
         """Put a section at the end of the document, inside <body>."""

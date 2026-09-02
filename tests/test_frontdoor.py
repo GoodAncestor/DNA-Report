@@ -176,3 +176,8 @@ def test_genome_demo_is_served_and_listed():
     assert "class='mod mod-genome'" in r.text
     assert "/demo/genome" in client.get("/").text          # reachable from the landing page
     assert "genome" in client.get("/health").json()["demos"]
+
+
+def test_landing_explains_moderate():
+    from dnareport.landing import LANDING_HTML
+    assert "<b>Moderate</b>" in LANDING_HTML

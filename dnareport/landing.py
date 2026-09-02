@@ -37,7 +37,7 @@ _LANDING_TEMPLATE = """<!doctype html>
    --paper:#f7f5ef; --card:#fffdf8; --ink:#1b1c18; --mut:#6b6a61; --faint:#939186;
    --line:#ddd9cc; --hair:#c9c4b3; --accent:#2b6a5b; --accent-soft:#e6efe9;
    --warn:#8a4b2a; --warn-soft:#f6ece5;
-   --robust:#0c7a54; --spec:#b8860b; --unknown:#8a8a8a;
+   --robust:#0c7a54; --moderate:#3d7ea6; --spec:#b8860b; --unknown:#8a8a8a;
    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Charter,Georgia,"Times New Roman",serif;
    --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,sans-serif;
    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -47,7 +47,7 @@ _LANDING_TEMPLATE = """<!doctype html>
    --paper:#14150f; --card:#1c1e17; --ink:#ecebe2; --mut:#9e9d92; --faint:#7b7a70;
    --line:#32342a; --hair:#3d3f33; --accent:#63c2a2; --accent-soft:#1d2a24;
    --warn:#e0a179; --warn-soft:#2a1d14;
-   --robust:#3fbb8a; --spec:#d6a63c; --unknown:#8f8f88;
+   --robust:#3fbb8a; --moderate:#6fb6dd; --spec:#d6a63c; --unknown:#8f8f88;
  }}
 
  *{box-sizing:border-box}
@@ -257,6 +257,8 @@ _LANDING_TEMPLATE = """<!doctype html>
    <p class="rule">How findings are labelled</p>
    <div class="tier"><span class="dot" style="background:var(--robust)"></span>
      <div><b>Robust</b><span>Replicated across independent cohorts.</span></div></div>
+   <div class="tier"><span class="dot" style="background:var(--moderate)"></span>
+     <div><b>Moderate</b><span>Real signal with limited replication, or one lab's classification.</span></div></div>
    <div class="tier"><span class="dot" style="background:var(--spec)"></span>
      <div><b>Speculative</b><span>Reported, but thin or unreplicated evidence.</span></div></div>
    <div class="tier"><span class="dot" style="background:var(--unknown)"></span>

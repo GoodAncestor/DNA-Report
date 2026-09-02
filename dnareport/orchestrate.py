@@ -61,6 +61,7 @@ class ReportResult:
     clocks: list = field(default_factory=list)   # list[ClockResult] from the aging engine
     tissue: str | None = None                     # sample tissue used for clock validity
     scan_stats: dict = field(default_factory=dict)  # metrics about what was scanned
+    read_first: list = field(default_factory=list)  # promoted findings, display order
 
 
 def _attach_sample_readings(findings: list, betas: dict):
@@ -611,10 +612,29 @@ def analyze(path: str, *, trait_table: str | None = None,
             except ImportError as e:
                 result.notes.append(f"GeneAsk not installed: {e}")
 
+    _interpret_and_promote(result)
     prior_limits = dict(result.scan_stats.get("limits") or {})
     result.scan_stats = _scan_stats(path, result)
     result.scan_stats["limits"] = {**prior_limits, **limits}
     return result
+
+
+def _interpret_and_promote(result: "ReportResult") -> None:
+    """Fill each finding's meaning, then decide what to read first. Runs once,
+    here, so every path (inline, worker, CLI) and every format sees the same
+    interpretation and the same promoted set."""
+    try:
+        from geneask.interpret.meaning import interpret as _interp_genome
+        _interp_genome(result.findings)
+    except ImportError:
+        pass
+    try:
+        from methylask.meaning import interpret as _interp_methyl
+        _interp_methyl(result.findings)
+    except ImportError:
+        pass
+    from .triage import promote
+    result.read_first = promote(result.findings)
 
 
 # reference-corpus sizes (approx, measured) each source represents — so the report
@@ -716,7 +736,8 @@ def render(result: ReportResult, out_html: str = "report.html") -> str:
     html = render_html(result.findings, result.provider_status,
                        disclaimer_path=_disclaimer_path(),
                        title="DNA-Report", marker_url=_marker_url,
-                       scan_stats=result.scan_stats)
+                       scan_stats=result.scan_stats,
+                       read_first=list(getattr(result, "read_first", None) or []))
     with open(out_html, "w") as fh:
         fh.write(html)
     return out_html
