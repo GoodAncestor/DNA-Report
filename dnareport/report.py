@@ -53,6 +53,22 @@ def display_notes(result, scratch: str = "", filename: str = "") -> list[str]:
     return out
 
 
+def compose_result_views(result, *, marker_url=None, filename: str = "") -> dict:
+    """Build JSON and Markdown from one covariate-filtered result view."""
+    from copy import copy
+    from .exports import report_markdown
+    from .highlights import split_display_findings
+    from .serialize import result_to_json
+
+    kept, _withheld = split_display_findings(list(result.findings or []))
+    filtered = copy(result)
+    filtered.findings = kept
+    return {
+        "json": result_to_json(filtered, marker_url=marker_url),
+        "markdown": report_markdown(filtered, filename=filename),
+    }
+
+
 def _render_findings(result, out_path: str) -> str:
     """The full report: highlights + bio-core's findings/disclaimer + notes +
     glossary.
@@ -185,7 +201,8 @@ def render_report(result, out_path: str, *, filename: str = "",
                                              getattr(result.kind, "value", "Unrecognised"))
         Path(out_path).write_text(pages.empty_report_page(
             kind_label=label, filename=filename,
-            notes=display_notes(result, scratch, filename))
+            notes=display_notes(result, scratch, filename),
+            statuses=result.provider_status)
             + export_links_html(claim_id))
         return out_path
     _render_findings(result, out_path)
@@ -223,7 +240,6 @@ def render_exports(result, out_dir: str, job_id: str, *, filename: str = "",
     JSON disagree about their own genome — the analysis touches live sources and
     is not guaranteed to be identical twice.
     """
-    from .exports import report_json, report_markdown
     from .orchestrate import _marker_url
 
     paths = {}
@@ -232,19 +248,24 @@ def render_exports(result, out_dir: str, job_id: str, *, filename: str = "",
                   kind_label=kind_label, claim_id=job_id)
     paths["html"] = html
 
-    js = os.path.join(out_dir, f"{job_id}.json")
-    Path(js).write_text(report_json(result, marker_url=_marker_url))
-    paths["json"] = js
-
-    md = os.path.join(out_dir, f"{job_id}.md")
     # Notes are sanitised for the same reason as in the HTML: an engine note can
     # interpolate the server-side scratch path it was handed.
     safe = display_notes(result, scratch, filename)
     original, result.notes = result.notes, safe
     try:
-        Path(md).write_text(report_markdown(result, filename=filename))
+        views = compose_result_views(
+            result, marker_url=_marker_url, filename=filename
+        )
     finally:
         result.notes = original
+
+    js = os.path.join(out_dir, f"{job_id}.json")
+    import json
+    Path(js).write_text(json.dumps(views["json"], indent=2, sort_keys=False))
+    paths["json"] = js
+
+    md = os.path.join(out_dir, f"{job_id}.md")
+    Path(md).write_text(views["markdown"])
     paths["md"] = md
     return paths
 

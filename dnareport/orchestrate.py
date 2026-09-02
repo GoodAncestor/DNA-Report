@@ -141,7 +141,8 @@ def _reference_findings(betas: dict, tissue: str | None = None):
 
 
 def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
-                   max_markers: int | None = 40):
+                   max_markers: int | None = 40, notes: list | None = None,
+                   scan_stats: dict | None = None):
     """Call the MethylAsk engine -> (findings, provider_status, clocks). Import
     lazily so DNA-Report can run with only one engine installed.
 
@@ -176,6 +177,17 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
         # clocks run on the WHOLE profile (cheap arithmetic, no network)
         clock_results = _clocks.run_all(base_betas, tissue=tissue)
 
+    notes = notes if notes is not None else []
+    scan_stats = scan_stats if scan_stats is not None else {}
+    scan_stats["markers_scanned"] = len(markers)
+    if max_markers and len(markers) > max_markers:
+        notes.append(
+            f"Methylation annotation covers the first {max_markers} of "
+            f"{len(markers)} markers."
+        )
+        scan_stats.setdefault("limits", {})["methylation_markers"] = {
+            "shown": max_markers, "found": len(markers),
+        }
     capped = markers[:max_markers] if (max_markers and markers) else markers
     rep = reg.annotate(capped) if capped else reg.annotate([])
     findings = _attach_sample_readings(rep.all_findings(), base_betas)
@@ -185,7 +197,7 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
     if kind == InputKind.BETA_MATRIX and base_betas:
         findings += _reference_findings(base_betas, tissue=tissue)
 
-    return findings, reg.status(), clock_results
+    return findings, rep.provider_status, clock_results
 
 
 def _reader_error(e: Exception) -> str:
@@ -250,7 +262,8 @@ def _pysam_readable(path: str, kind: InputKind, result: "ReportResult"):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
+def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
+                 *, scan_stats: dict | None = None, statuses: list | None = None):
     """Interpret a single-sample VCF/23andMe callset -> (findings, status).
 
     Two screens: the ClinVar clinical panel (pathogenic/likely-pathogenic hits,
@@ -260,6 +273,8 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     """
     findings = []
     notes: list[str] = []
+    scan_stats = scan_stats if scan_stats is not None else {}
+    statuses = statuses if statuses is not None else []
     limits: dict[str, dict] = {}     # what was capped, as data — see the GWAS cut
     is_array = kind in (InputKind.ARRAY_GENOTYPE, InputKind.TWENTYTHREE_AND_ME)
 
@@ -284,6 +299,8 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
         notes.append("This genotype export parsed but contained no genotype rows, "
                      "so there was nothing to screen. A partial or re-saved export "
                      "is the usual cause — upload the file exactly as downloaded.")
+    if parsed is not None:
+        scan_stats["markers_scanned"] = len(getattr(parsed, "records", None) or [])
 
     # ClinVar clinical screen. Two input paths:
     #   VCF        -> bio-core carried_variants (pysam, REF/ALT already in the file)
@@ -293,6 +310,13 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
     try:
         from geneask.interpret.clinvar_screen import screen_findings, load_panel
         panel = load_panel()
+        from biocore.providers.base import Health, ProviderStatus
+        panel_count = sum(len(entry.get("variants", [])) for entry in panel.values())
+        statuses.append(ProviderStatus(
+            name="clinvar_panel_157", health=Health.OK,
+            version="bundled", record_count=panel_count,
+            note="The bundled ClinVar panel was used.",
+        ))
         if is_array:
             if parsed is not None:
                 from geneask.parsers.to_carried import carried_from_parse
@@ -301,6 +325,7 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
         else:
             from biocore.variants.carried import carried_variants
             carried = carried_variants(path)
+            scan_stats["markers_scanned"] = len(carried)
             if not carried:
                 notes.append(
                     "No carried variants were read from this VCF, so the ClinVar "
@@ -382,7 +407,7 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
 
     # CPIC pharmacogenomics: for pharmacogenes the person carries variants in,
     # surface CPIC drug-response guidance. Mirror-first (refresh:pgx). This keys on
-    # the GENE (from ClinVar-screen findings), not a called diplotype — an honest
+    # the GENE (from ClinVar-screen findings), not a called diplotype — a limited
     # "you carry variants in CYP2C19; here is CPIC's drug guidance for this gene"
     # rather than a phenotype claim (diplotype calling is a documented follow-on).
     try:
@@ -426,7 +451,7 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None):
                                                         default_pacing as _ag_pacing)
         # AlphaGenome publishes no quota — their stated advice is to increase load
         # until RESOURCE_EXHAUSTED — so there is no daily number to budget against.
-        # Pace, bound the wait, and report honestly when a run was cut short.
+        # Pace, bound the wait, and state when a run was cut short.
         agp = _ag_pacing()
         agn = _ag(findings, pacing=agp)
         if agn:
@@ -564,7 +589,10 @@ def analyze(path: str, *, trait_table: str | None = None,
     with _pysam_readable(path, kind, result) as work:
         if "methylask" in engines:
             try:
-                f, st, clk = _run_methylask(work, kind, tissue=tissue)
+                f, st, clk = _run_methylask(
+                    work, kind, tissue=tissue, notes=result.notes,
+                    scan_stats=result.scan_stats,
+                )
                 result.findings += f
                 result.provider_status += st
                 result.clocks += clk
@@ -573,15 +601,19 @@ def analyze(path: str, *, trait_table: str | None = None,
 
         if "geneask" in engines:
             try:
-                f, gnotes, glimits = _run_geneask(work, kind, trait_table=trait_table)
+                f, gnotes, glimits = _run_geneask(
+                    work, kind, trait_table=trait_table,
+                    scan_stats=result.scan_stats, statuses=result.provider_status,
+                )
                 result.findings += f
                 result.notes += gnotes
                 limits.update(glimits)
             except ImportError as e:
                 result.notes.append(f"GeneAsk not installed: {e}")
 
+    prior_limits = dict(result.scan_stats.get("limits") or {})
     result.scan_stats = _scan_stats(path, result)
-    result.scan_stats["limits"] = limits
+    result.scan_stats["limits"] = {**prior_limits, **limits}
     return result
 
 
@@ -595,8 +627,7 @@ _CORPUS_SCALE = {
 
 
 def _scan_stats(path: str, result: "ReportResult") -> dict:
-    """Honest metrics about what this scan touched — derived from what actually
-    happened, not invented. Feeds the report's 'scan summary' panel."""
+    """Metrics derived from the providers and markers this scan used."""
     import os
     from biocore.report.sources import resolve as _rsrc
     findings = result.findings
@@ -608,29 +639,37 @@ def _scan_stats(path: str, result: "ReportResult") -> dict:
         return ("uncertain" in sig or "conflicting" in sig or t in ("speculative", "unknown"))
     classified = sum(1 for f in findings if not _uncertain(f))
     uncertain = len(findings) - classified
-    # distinct external sources, split local-mirror vs live-API
+    # Distinct finding sources remain useful when no provider status is available.
     srcs = {}
     for f in findings:
         s = _rsrc(getattr(f, "source", "") or "")
         if s:
             srcs[s.key] = s
     _LIVE_API = {"gnomad", "alphagenome"}   # queried live per-variant, not mirrored
-    dbs_queried = sorted(k for k in srcs if k not in _LIVE_API)
+    statuses = list(getattr(result, "provider_status", None) or [])
+    dbs_queried = sorted({status.name for status in statuses})
+    if not dbs_queried:
+        dbs_queried = sorted(k for k in srcs if k not in _LIVE_API)
     apis_called = sorted(k for k in srcs if k in _LIVE_API)
-    variants_of_science = sum(_CORPUS_SCALE.get(k, 0) for k in srcs)
+    reference_records = sum(
+        int(status.record_count or 0) for status in statuses
+    ) if statuses else sum(_CORPUS_SCALE.get(k, 0) for k in srcs)
     try:
         input_bytes = os.path.getsize(path)
     except OSError:
         input_bytes = 0
     return {
         "input_bytes": input_bytes,
-        "markers_scanned": len({f.marker for f in findings}),
+        "markers_scanned": (result.scan_stats or {}).get(
+            "markers_scanned", len({f.marker for f in findings})
+        ),
         "findings_total": len(findings),
         "classified": classified,
         "uncertain": uncertain,
-        "local_dbs_queried": [srcs[k].name for k in dbs_queried],
+        "local_dbs_queried": dbs_queried,
         "live_apis_called": [srcs[k].name for k in apis_called],
-        "reference_variants_scanned": variants_of_science,
+        "reference_records_scanned": reference_records,
+        "reference_variants_scanned": reference_records,
     }
 
 

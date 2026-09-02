@@ -180,15 +180,35 @@ _EMPTY_CSS = """
 
 
 def empty_report_page(*, kind_label: str, filename: str = "",
-                      notes: list[str] | None = None) -> str:
+                      notes: list[str] | None = None, statuses=()) -> str:
     """A file we read successfully that produced nothing worth reporting.
 
     This is a *result*, not an error — so it says what was recognised and offers
-    the honest reasons a genuine file can come back empty, instead of a bare
+    the specific reasons a genuine file can come back empty, instead of a bare
     zero. Returned with HTTP 200.
     """
     esc = _html.escape
     what = (f"<div class='what'>{esc(filename)}</div>" if filename else "")
+    statuses = list(statuses or [])
+    bad = [status for status in statuses
+           if getattr(status.health, "value", status.health) != "ok"]
+    if bad:
+        screening = (
+            f"We could not use {len(bad)} of {len(statuses)} reference databases."
+        )
+        items = "".join(
+            f"<li><b>{esc(status.name)}</b> — {esc(status.note or 'No note was provided.')}</li>"
+            for status in bad
+        )
+        status_html = (
+            "<section class='after'><p class='rule'>What did not run</p>"
+            f"<ul class='reasons'>{items}</ul></section>"
+        )
+    else:
+        count = len(statuses)
+        suffix = "" if count == 1 else "s"
+        screening = f"We screen your file against {count} reference database{suffix}."
+        status_html = ""
     notes_html = ""
     if notes:
         notes_html = ("<div class='notes'>" +
@@ -197,9 +217,7 @@ def empty_report_page(*, kind_label: str, filename: str = "",
  <header>
    <p class="eyebrow">Good&nbsp;Ancestor &middot; DNA-Report</p>
    <h1>We read your file &mdash; nothing met the reporting bar</h1>
-   <p class="lede">The file parsed cleanly and was screened against our reference
-     databases. No marker in it crossed the threshold for a finding we would stand
-     behind, so there is nothing to report rather than something padded out.</p>
+   <p class="lede">{esc(screening)} No marker crosses the reporting threshold.</p>
    <div class="track" aria-hidden="true"></div>
  </header>
 
@@ -210,6 +228,8 @@ def empty_report_page(*, kind_label: str, filename: str = "",
      a far better answer than a page of associations too weak to mean anything.</p>
    {notes_html}
  </div>
+
+ {status_html}
 
  <section class="after">
    <p class="rule">Why a valid file comes back empty</p>

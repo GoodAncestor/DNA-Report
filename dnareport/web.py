@@ -67,10 +67,9 @@ from .detect import detect, InputKind
 from .tiering import job_tier, queue_enabled, QUEUED
 from .orchestrate import analyze, compare, _marker_url, _scan_stats
 from .report import (KIND_LABEL as _KIND_LABEL, render_report, report_html,
-                     content_type as report_content_type)
+                     compose_result_views, content_type as report_content_type)
 from .tissue import infer_tissue
 from .landing import LANDING_HTML
-from .serialize import result_to_json
 from . import pages
 from .uploads import (UploadError, ACCEPTED_FORMATS, INLINE_R2_MAX, stream_to_disk,
                       unwrap_archive)
@@ -407,7 +406,7 @@ def _rate_limit(key: str):
 
 # ---- concurrency guard on analysis -----------------------------------------
 # A rate limit counts requests per minute; it cannot stop N whole-genome analyses
-# from arriving in the same second, and this box is mild-CPU by design. Each
+# from arriving in the same second. This box has modest CPU capacity. Each
 # inline analysis also occupies one of uvicorn's threadpool slots for its whole
 # runtime, so without a cap enough simultaneous uploads stop the process
 # answering anything at all — including /health, which is what makes an overload
@@ -631,7 +630,10 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
 
     if want_json:
         _check_api_key(x_api_key, key_q)
-        return JSONResponse(result_to_json(res, marker_url=_marker_url))
+        return JSONResponse(compose_result_views(
+            res, marker_url=_marker_url,
+            filename=filename or os.path.basename(local),
+        )["json"])
 
     # A readable file that yielded nothing is a RESULT (200): report_html serves
     # the empty-report page, which says what was recognised and why a valid file
@@ -713,7 +715,9 @@ def demo_combined(format: str = "", accept: str = Header(default=""),
 
     if _wants_json(accept, format):
         _check_api_key(x_api_key, key_q=api_key)
-        return JSONResponse(result_to_json(_build(), marker_url=_marker_url))
+        return JSONResponse(compose_result_views(
+            _build(), marker_url=_marker_url, filename="combined demo",
+        )["json"])
     def _render():
         out = os.path.join(RESULT_DIR, f"{uuid.uuid4().hex}.html")
         _render_full(_build(), out)
