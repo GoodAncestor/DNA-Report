@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Protocol
 
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 
 _ZYGOSITY_CLASS = {
     "het": "one altered copy",
@@ -117,16 +117,21 @@ Never say the person has, will get, or will develop a condition.
 Make no diagnosis.
 Cite each factual claim with its chain label in square brackets.
 For example, write [BRCA2] or [ClinVar record].
-Use at most 180 words.
+Use at most 160 words.
 Cover the change first.
 Then cover the condition, classification meaning, source certainty, and a sensible next step.
+Plan silently. Do not show your planning or your notes.
+Write only the final text, and place it between the markers <dive> and </dive>.
 Prompt version {version}."""
 
 
 def build_prompt(facts: dict) -> tuple[str, str]:
     """Return the system instruction and a user turn containing facts only."""
+    labels = [c.get("label") for c in (facts.get("chain") or []) if c.get("label")]
+    user_facts = dict(facts)
+    user_facts["allowed_citation_labels"] = labels
     return _SYSTEM.format(version=PROMPT_VERSION), json.dumps(
-        facts, indent=1, sort_keys=True
+        user_facts, indent=1, sort_keys=True
     )
 
 
@@ -148,6 +153,17 @@ _BANNED = re.compile(
 )
 _CITATION = re.compile(r"\[([^\]]{1,80})\]")
 MAX_WORDS = 180
+
+
+_DIVE = re.compile(r"<dive>(.*?)</dive>", re.S)
+
+
+def extract_dive(text: str) -> str:
+    """The final text between the last <dive> and </dive> markers. A model that
+    shows its planning in the same stream puts the answer last; without markers
+    the whole text is taken as the draft and the post-check judges it."""
+    found = _DIVE.findall(text or "")
+    return (found[-1] if found else (text or "")).strip()
 
 
 def check_draft(text: str, facts: dict) -> str | None:
@@ -202,7 +218,7 @@ class OpenAICompat:
             {
                 "model": self.model,
                 "temperature": 0.2,
-                "max_tokens": 400,
+                "max_tokens": 1500,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -393,6 +409,7 @@ def explain_promoted(
         attempted += 1
         try:
             text = backend.draft(system, user, timeout=call_timeout)
+            text = extract_dive(text)
         except Exception as error:
             outcome["rejected"] += 1
             finding.deeper_dive_meta = {

@@ -80,8 +80,18 @@ def test_cache_key_ignores_genotype_and_tracks_prompt_version():
 
 def test_prompt_is_facts_locked_and_plain():
     system, user = build_prompt(facts_for(_f()))
-    assert "180 words" in system and "only the facts" in system.lower()
+    assert "160 words" in system and "only the facts" in system.lower()
     assert "BRCA2" in user and "MedGen:C0677776" in user
     assert "diagnos" not in system.lower().replace("no diagnosis", "")
     for banned in ("C/CAG", "genotype"):
         assert banned not in user
+
+
+def test_extract_dive_takes_the_marked_answer_and_prompt_lists_labels():
+    from dnareport.explain import extract_dive
+    raw = "Let me plan. Labels: [BRCA2].\n<dive>The change sits in BRCA2 [BRCA2].</dive>"
+    assert extract_dive(raw) == "The change sits in BRCA2 [BRCA2]."
+    assert extract_dive("plain text [BRCA2]") == "plain text [BRCA2]"
+    assert extract_dive("") == ""
+    system, user = build_prompt(facts_for(_f()))
+    assert "<dive>" in system and "allowed_citation_labels" in user and "\"BRCA2\"" in user
