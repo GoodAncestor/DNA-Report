@@ -23,7 +23,7 @@ def test_read_this_first_leads_and_carries_meaning():
     assert "one altered copy" in markdown
     assert "https://www.ncbi.nlm.nih.gov/clinvar/variation/51063/" in markdown
     for part in (
-        "What was found", "What it can mean", "How sure", "Sensible next step",
+        "What was found", "What it can mean", "How sure", "Next step",
     ):
         assert part in markdown
 

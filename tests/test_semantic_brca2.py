@@ -69,7 +69,7 @@ def test_brca2_reads_the_same_in_html_json_markdown_and_mcp():
     assert "Read this first" in html and "Hereditary breast and ovarian cancer syndrome" in html
     assert "one altered copy" in html and _REASON in html
     assert "Confirm the result with a clinical laboratory test" in html
-    assert "What was found" in html and "Sensible next step" in html
+    assert "What was found" in html and "Next step" in html
 
     doc = result_to_json(r)
     fj = doc["important"][0]
@@ -79,7 +79,7 @@ def test_brca2_reads_the_same_in_html_json_markdown_and_mcp():
 
     md = report_markdown(r)
     assert "## Read this first" in md and _REASON in md
-    assert "Sensible next step" in md and "one altered copy" in md
+    assert "Next step" in md and "one altered copy" in md
 
     imp = important_findings(lambda _id: doc, _ID)
     assert [f["marker"] for f in imp["findings"]] == ["13-32316419-CAG-C"]

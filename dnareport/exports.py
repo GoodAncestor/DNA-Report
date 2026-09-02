@@ -107,7 +107,7 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
             lines.append(f"  <br>Condition: {condition}")
         for label, key in (
             ("What was found", "found"), ("What it can mean", "can_mean"),
-            ("How sure", "how_sure"), ("Sensible next step", "next_step"),
+            ("How sure", "how_sure"), ("Next step", "next_step"),
         ):
             if interpretation.get(key):
                 lines.append(f"  <br>**{label}.** {interpretation[key]}")
