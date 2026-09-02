@@ -1,6 +1,14 @@
 """What earns "Read this first" is decided by published lists, and each says why."""
 from biocore.providers.base import Finding, Tier, Category
-from dnareport.triage import promote, REASON_A, REASON_B, REASON_C, REASON_D
+from geneask.annotators import clingen
+from dnareport.triage import (
+    promote,
+    REASON_A,
+    REASON_APRIME,
+    REASON_B,
+    REASON_C,
+    REASON_D,
+)
 
 
 def _cv(gene, sig, stars, marker="m", source="clinvar_mirror"):
@@ -27,6 +35,29 @@ def test_rule_b_two_stars_non_acmg_and_panel_source():
     promote([f]); assert f.promoted and f.promoted_reason == REASON_B
     g = _cv("MTHFR", "Pathogenic", 1)
     promote([g]); assert not g.promoted and g.promoted_reason == ""
+
+
+def test_rule_a_prime_uses_clingen_actionability_between_a_and_b(monkeypatch):
+    monkeypatch.setattr(
+        clingen,
+        "actionability_for",
+        lambda gene: {"score": 9} if gene == "RARE1" else None,
+    )
+    actionable = _cv("RARE1", "Pathogenic", 1, marker="actionable")
+    two_stars = _cv("MTHFR", "Pathogenic", 2, marker="two-stars")
+    acmg = _cv("BRCA2", "Pathogenic", 1, marker="acmg")
+
+    out = promote([two_stars, actionable, acmg])
+
+    assert actionable.promoted_reason == REASON_APRIME
+    assert [finding.marker for finding in out] == ["acmg", "actionable", "two-stars"]
+
+
+def test_rule_a_prime_needs_a_recorded_score_of_nine(monkeypatch):
+    monkeypatch.setattr(clingen, "actionability_for", lambda gene: {"score": None})
+    finding = _cv("RARE1", "Pathogenic", 1)
+    promote([finding])
+    assert not finding.promoted
 
 
 def test_rule_c_cpic_level_a():

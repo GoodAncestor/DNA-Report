@@ -8,6 +8,7 @@ it measures review stars and p-values, which is not consequence.
 
 Rules, in order; the first match gives the reason:
   A  ClinVar P/LP in a gene on the ACMG secondary-findings list
+  A' ClinVar P/LP in a gene with a ClinGen actionability score of 9 or more
   B  ClinVar P/LP with two or more review stars
   C  CPIC level A (or A/B) drug-response gene
   D  GWAS: carried risk allele, genome-wide significant, large effect
@@ -16,10 +17,12 @@ Rules, in order; the first match gives the reason:
 from __future__ import annotations
 import json
 from pathlib import Path
+from geneask.annotators import clingen
 from geneask.interpret.lists import acmg_sf, ACMG_SF_VERSION
 from geneask.interpret.copy import classify
 
 REASON_A = "Clinicians are told to report changes in this gene ({list})"
+REASON_APRIME = "ClinGen rates this gene as actionable"
 REASON_B = "Several labs agree this change is pathogenic"
 REASON_C = "Changes how some medicines work (CPIC)"
 REASON_D = "Large, replicated effect on {trait}"
@@ -54,12 +57,16 @@ def rule(f) -> tuple[int, str] | None:
             return None
         if acmg_sf(str(d.get("gene") or "")):
             return 0, REASON_A.format(list=f"ACMG {ACMG_SF_VERSION}")
+        actionability = clingen.actionability_for(str(d.get("gene") or ""))
+        score = _num((actionability or {}).get("score"))
+        if score is not None and score >= 9:
+            return 1, REASON_APRIME
         if int(_num(d.get("gold_stars")) or 0) >= 2:
-            return 1, REASON_B
+            return 2, REASON_B
         return None
     if f.source == "cpic":
         if str(d.get("cpic_level") or "").upper() in ("A", "A/B"):
-            return 2, REASON_C
+            return 3, REASON_C
         return None
     if f.source == "gwas_catalog":
         p = _num(d.get("p"))
@@ -68,11 +75,11 @@ def rule(f) -> tuple[int, str] | None:
         et, ev = d.get("effect_type"), _num(d.get("effect"))
         trait = str(d.get("trait") or "this trait")
         if et == "or" and ev is not None and (ev >= 1.5 or ev <= 0.67):
-            return 3, REASON_D.format(trait=trait)
+            return 4, REASON_D.format(trait=trait)
         if et == "beta" and ev is not None:
             cut = _beta_cut(trait)
             if cut is not None and abs(ev) >= cut:
-                return 3, REASON_D.format(trait=trait)
+                return 4, REASON_D.format(trait=trait)
     return None
 
 
