@@ -9,7 +9,8 @@ from pathlib import Path
 from biocore.variants.carried import carried_variants
 from geneask.interpret.clinvar_screen import screen_findings
 from dnareport.detect import InputKind
-from dnareport.orchestrate import ReportResult, _interpret_and_promote
+from geneask.annotators import cpic_pgx, pharmcat
+from dnareport.orchestrate import ReportResult, _interpret_and_promote, _run_geneask
 from dnareport.serialize import result_to_json
 from dnareport.exports import report_markdown
 from dnareport.mcp_server import one_finding, important_findings
@@ -84,3 +85,54 @@ def test_brca2_reads_the_same_in_html_json_markdown_and_mcp():
     assert [f["marker"] for f in imp["findings"]] == ["13-32316419-CAG-C"]
     assert imp["findings"][0]["interpretation"]["next_step"].startswith("Confirm")
     assert "diagnosis" in imp["disclaimer"]
+
+
+def test_array_upload_explains_why_it_has_no_diplotype(monkeypatch):
+    sample = Path(__file__).parent / "fixtures" / "sample_23andme.txt"
+    monkeypatch.setattr(pharmcat, "available", lambda: True)
+    monkeypatch.setattr(
+        pharmcat,
+        "call_diplotypes",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("An array must not enter PharmCAT.")
+        ),
+    )
+
+    _findings, notes, _limits = _run_geneask(
+        str(sample), InputKind.TWENTYTHREE_AND_ME
+    )
+
+    assert (
+        "Pharmacogenomic guidance is by gene only: this file type does not "
+        "support diplotype calling."
+    ) in notes
+
+
+def test_sequencing_calls_pharmcat_once_and_selects_by_phenotype(monkeypatch):
+    calls = []
+    selected = []
+    monkeypatch.setattr(pharmcat, "available", lambda: True)
+
+    def call_diplotypes(vcf_path, scratch, **kwargs):
+        calls.append((vcf_path, scratch))
+        return {
+            "CYP2C19": {
+                "diplotype": "*1/*2",
+                "phenotype": "Intermediate Metabolizer",
+                "activity_score": 1.0,
+                "source": "PharmCAT 3.4.0",
+            }
+        }
+
+    def recommendations(gene, phenotype, **kwargs):
+        selected.append((gene, phenotype, kwargs))
+        return []
+
+    monkeypatch.setattr(pharmcat, "call_diplotypes", call_diplotypes)
+    monkeypatch.setattr(cpic_pgx, "recommendations_for_phenotype", recommendations)
+
+    _run_geneask(str(_DEMO), InputKind.VCF)
+
+    assert len(calls) == 1
+    assert selected[0][0:2] == ("CYP2C19", "Intermediate Metabolizer")
+    assert selected[0][2]["diplotype"] == "*1/*2"

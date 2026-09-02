@@ -406,28 +406,70 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
     except Exception:
         pass
 
-    # CPIC pharmacogenomics: for pharmacogenes the person carries variants in,
-    # surface CPIC drug-response guidance. Mirror-first (refresh:pgx). This keys on
-    # the GENE (from ClinVar-screen findings), not a called diplotype — a limited
-    # "you carry variants in CYP2C19; here is CPIC's drug guidance for this gene"
-    # rather than a phenotype claim (diplotype calling is a documented follow-on).
+    # CPIC pharmacogenomics: sequencing inputs enter PharmCAT once, then CPIC
+    # guidance is selected by the resulting phenotype. Arrays retain gene-level
+    # guidance because their sparse sites do not support diplotype calling.
     try:
-        from geneask.annotators.cpic_pgx import recommendations_for_gene
-        genes = {str((f.detail or {}).get("gene")) for f in findings
-                 if (f.detail or {}).get("gene")}
-        pgx_seen = set()
-        for g in sorted(genes):
-            recs = recommendations_for_gene(g)
-            # one guidance line per drug (dedup the phenotype-expanded rows)
-            by_drug = {}
-            for r in recs:
-                by_drug.setdefault(r.detail["drug"], r)
-            for r in by_drug.values():
-                findings.append(r)
-                pgx_seen.add(g)
-        if pgx_seen:
-            notes.append(f"CPIC: pharmacogenomic drug guidance for {len(pgx_seen)} gene(s) "
-                         f"you carry variants in")
+        from geneask.annotators import cpic_pgx, pharmcat
+
+        def add_gene_guidance() -> None:
+            genes = {str((f.detail or {}).get("gene")) for f in findings
+                     if (f.detail or {}).get("gene")}
+            seen_genes = set()
+            for gene in sorted(genes):
+                by_drug = {}
+                for recommendation in cpic_pgx.recommendations_for_gene(gene):
+                    by_drug.setdefault(recommendation.detail["drug"], recommendation)
+                for recommendation in by_drug.values():
+                    findings.append(recommendation)
+                    seen_genes.add(gene)
+            if seen_genes:
+                notes.append(
+                    f"CPIC provides drug guidance for {len(seen_genes)} gene(s) with variants."
+                )
+
+        platform = "ARRAY" if is_array else "WGS"
+        if not pharmcat.platform_ok(platform):
+            notes.append(
+                "Pharmacogenomic guidance is by gene only: this file type does not "
+                "support diplotype calling."
+            )
+            add_gene_guidance()
+        elif not pharmcat.available():
+            notes.append(
+                "Pharmacogenomic guidance is by gene only: PharmCAT is not installed "
+                "on this worker."
+            )
+            add_gene_guidance()
+        else:
+            with tempfile.TemporaryDirectory(prefix="pharmcat-") as scratch:
+                calls = pharmcat.call_diplotypes(path, scratch)
+            if getattr(calls, "note", None):
+                notes.append(calls.note)
+            seen_phenotypes = set()
+            seen_drugs = set()
+            for gene, call in sorted(calls.items()):
+                phenotype = str(call.get("phenotype") or "").strip()
+                if not phenotype:
+                    continue
+                recommendations = cpic_pgx.recommendations_for_phenotype(
+                    gene,
+                    phenotype,
+                    diplotype=call.get("diplotype"),
+                    activity_score=call.get("activity_score"),
+                    diplotype_source=call.get("source"),
+                )
+                for recommendation in recommendations:
+                    drug_key = (gene, recommendation.detail.get("drug"))
+                    if drug_key in seen_drugs:
+                        continue
+                    seen_drugs.add(drug_key)
+                    findings.append(recommendation)
+                    seen_phenotypes.add((gene, phenotype))
+            if seen_phenotypes:
+                notes.append(
+                    f"CPIC selects drug guidance for {len(seen_phenotypes)} PharmCAT phenotype(s)."
+                )
     except Exception:
         pass
 
