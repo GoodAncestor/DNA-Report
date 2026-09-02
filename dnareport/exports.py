@@ -28,7 +28,7 @@ _TIER_ORDER = {"robust": 0, "moderate": 1, "speculative": 2, "unknown": 3}
 #: Bumped whenever the Markdown's STRUCTURE changes — headings, front-matter keys,
 #: ordering. Prose edits do not move it. It exists so an agent parsing this file
 #: can refuse a shape it does not know instead of silently mis-reading one.
-MARKDOWN_FORMAT_VERSION = "1.0"
+MARKDOWN_FORMAT_VERSION = "2.0"
 
 
 def report_json(result, marker_url=None) -> str:
@@ -69,19 +69,64 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     or a screen that did not run changes what the list below means, and a reader
     scrolling a long document would meet it last or not at all.
     """
-    from .serialize import report_summary
-    sm = report_summary(result)
-    kind = getattr(result.kind, "value", str(result.kind))
+    from .serialize import result_to_json
+
+    doc = result_to_json(result)
+    sm = doc["summary"]
+    kind = doc["input_kind"]
+
+    zygosity_words = {
+        "het": "one altered copy", "hom": "two altered copies",
+        "hemi": "one copy (X or Y)", "unknown": "copies not determined",
+    }
+
+    def finding_block(finding: dict) -> list[str]:
+        detail = finding.get("detail") or {}
+        gene = finding.get("gene")
+        lead = f"**{gene}**" if gene and gene != "?" else "**finding**"
+        lines = [f"- {lead} — {finding['description']}",
+                 f"  <br>`{finding['marker']}`"]
+        bits = [f"tier: {finding['tier']}"]
+        zygosity = detail.get("zygosity")
+        if zygosity:
+            bits.append(zygosity_words.get(zygosity, zygosity))
+        if detail.get("gold_stars") is not None:
+            bits.append(f"review stars: {detail['gold_stars']}")
+        for key in ("p", "beta", "n"):
+            if detail.get(key) not in (None, ""):
+                bits.append(f"{key}: {detail[key]}")
+        lines.append(f"  <br>_{' · '.join(bits)}_")
+        source_link = (finding.get("links") or {}).get("source")
+        if source_link:
+            lines.append(f"  <br>Source record: {source_link}")
+        interpretation = finding.get("interpretation") or {}
+        condition = interpretation.get("condition")
+        if not condition and detail.get("conditions"):
+            condition = detail["conditions"][0]
+        if condition:
+            lines.append(f"  <br>Condition: {condition}")
+        for label, key in (
+            ("What was found", "found"), ("What it can mean", "can_mean"),
+            ("How sure", "how_sure"), ("Sensible next step", "next_step"),
+        ):
+            if interpretation.get(key):
+                lines.append(f"  <br>**{label}.** {interpretation[key]}")
+        if finding.get("pmids"):
+            lines.append("  <br>PubMed: " + ", ".join(
+                f"[{pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)"
+                for pmid in finding["pmids"]
+            ))
+        return lines
 
     # YAML front matter. Agents are a first-class reader of this file, and prose
     # headings are not a contract — reword one and every consumer breaks silently.
-    # These keys are, so a reader can get the shape of the report, and crucially
-    # whether it is COMPLETE, without parsing a word of the body.
+    # These keys let a reader get the report shape and its completeness without
+    # parsing the body.
     fm = [
         "---",
         f"format: dna-report-markdown/{MARKDOWN_FORMAT_VERSION}",
         f"input_kind: {kind}",
-        f"findings: {len(result.findings)}",
+        f"findings: {len(doc['findings'])}",
         f"bounded: {'true' if sm['bounded'] else 'false'}",
     ]
     if filename:
@@ -99,10 +144,21 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     head = [f"Input type: `{kind}`"]
     if filename:
         head.append(f"File: `{filename}`")
-    head.append(f"Findings: {len(result.findings):,}")
+    head.append(f"Findings: {len(doc['findings']):,}")
     if result.tissue:
         head.append(f"Tissue: {result.tissue}")
     out += ["  \n".join(head), ""]
+
+    if doc.get("important"):
+        out += [
+            "## Read this first", "",
+            "These findings are here because a published list says they matter, "
+            "not because of a score.",
+            "Each finding says why.", "",
+        ]
+        for finding in doc["important"]:
+            out.append(f"**Why:** {finding.get('promoted_reason', '')}")
+            out += finding_block(finding) + [""]
 
     # The summary comes first because this file is routinely longer than anything
     # that will be read whole — by a person or by a model with a context limit.
@@ -183,36 +239,20 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
                 "that limited the scan.", ""]
     else:
         by_cat: dict[str, list] = {}
-        for f in result.findings:
-            by_cat.setdefault(_category_of(f), []).append(f)
+        for finding in doc["findings"]:
+            categories = finding.get("categories") or []
+            category = categories[0].title() if categories else "Other"
+            by_cat.setdefault(category, []).append(finding)
         for cat in sorted(by_cat):
             out += [f"### {cat}", ""]
             fs = sorted(by_cat[cat],
-                        key=lambda f: (_TIER_ORDER.get(_tier_of(f), 9),
-                                       str(f.marker)))
-            for f in fs:
-                d = f.detail or {}
-                bits = [f"tier: {_tier_of(f)}"]
-                if d.get("gene") and d["gene"] != "?":
-                    bits.append(f"gene: {d['gene']}")
-                for k in ("p", "beta", "n"):
-                    if d.get(k) not in (None, ""):
-                        bits.append(f"{k}: {d[k]}")
-                # Gene first, identifier in a code span. A marker id is not always
-                # short — an indel's is the whole allele, measured at 330
-                # characters on the demo genome — and in bold at the head of the
-                # line that is a wall of letters where the reader is looking for
-                # the gene name. The full id is kept, never abbreviated: this is
-                # the file someone greps or hands to a clinician.
-                gene = d.get("gene")
-                lead = f"**{gene}**" if gene and gene != "?" else "**finding**"
-                out.append(f"- {lead} — {f.description}")
-                out.append(f"  <br>`{f.marker}`")
-                out.append(f"  <br>_{' · '.join(bits)}_")
-                if f.pmids:
-                    out.append("  <br>PubMed: " + ", ".join(
-                        f"[{p}](https://pubmed.ncbi.nlm.nih.gov/{p}/)"
-                        for p in f.pmids))
+                        key=lambda finding: (
+                            _TIER_ORDER.get(finding.get("tier"), 9),
+                            -(finding.get("magnitude") or 0),
+                            str(finding.get("marker", "")),
+                        ))
+            for finding in fs:
+                out += finding_block(finding)
             out.append("")
 
     path = disclaimer_path
