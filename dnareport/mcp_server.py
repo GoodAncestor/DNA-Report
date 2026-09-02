@@ -50,6 +50,10 @@ MCP_ALLOWED_HOSTS = [h.strip() for h in os.environ.get(
     if h.strip()]
 
 MAX_FINDINGS_PER_CALL = int(os.environ.get("DNAREPORT_MCP_PAGE_SIZE", "50"))
+DISCLAIMER = (
+    "Research associations with evidence tiers, not a diagnosis. "
+    "Talk with a clinician before acting."
+)
 
 
 def _bad_id(report_id: str) -> dict | None:
@@ -90,25 +94,70 @@ def summarise(read_report, report_id: str) -> dict:
     return {"status": "ready", "summary": summary}
 
 
+def _read_ready_report(read_report, report_id: str) -> tuple[dict | None, dict | None]:
+    state = read_report(report_id)
+    if state is None:
+        return None, {"error": "no such report", "disclaimer": DISCLAIMER}
+    if state.get("status") == "ready":
+        return state.get("report") or {}, None
+    if "status" in state:
+        return None, state
+    return state, None
+
+
+def _match(finding: dict, *, tier="", gene="", topic="", condition="",
+           classification="", direction="", predicted=None,
+           risk_allele_carried=None) -> bool:
+    detail = finding.get("detail") or {}
+    if tier and str(finding.get("tier", "")).lower() != tier.lower():
+        return False
+    if gene and str(finding.get("gene") or "").upper() != gene.upper():
+        return False
+    if topic and str(finding.get("topic", "")).lower() != topic.lower():
+        return False
+    if condition:
+        names = [str(name).lower() for name in (detail.get("conditions") or [])]
+        interpretation = finding.get("interpretation") or {}
+        if interpretation.get("condition"):
+            names.append(str(interpretation["condition"]).lower())
+        if not any(condition.lower() in name for name in names):
+            return False
+    significance = str(detail.get("clinical_significance") or "")
+    if classification and classification.lower() not in significance.lower():
+        return False
+    if direction and str(finding.get("direction", "")).lower() != direction.lower():
+        return False
+    if predicted is not None:
+        has_prediction = bool(detail.get("alphamissense") or detail.get("alphagenome"))
+        if has_prediction is not predicted:
+            return False
+    if (risk_allele_carried is not None
+            and detail.get("risk_allele_carried") is not risk_allele_carried):
+        return False
+    return True
+
+
 def query_findings(read_report, report_id: str, tier: str = "", gene: str = "",
-                   topic: str = "", limit: int = MAX_FINDINGS_PER_CALL,
-                   offset: int = 0) -> dict:
+                   topic: str = "", condition: str = "",
+                   classification: str = "", direction: str = "",
+                   predicted: bool | None = None,
+                   risk_allele_carried: bool | None = None,
+                   limit: int = MAX_FINDINGS_PER_CALL, offset: int = 0) -> dict:
     """Implementation of the get_findings tool."""
     bad = _bad_id(report_id)
     if bad:
         return bad
-    state = read_report(report_id)
-    if state.get("status") != "ready":
+    doc, state = _read_ready_report(read_report, report_id)
+    if state is not None:
         return state
-    doc = state["report"]
-
-    rows = list(doc.get("findings") or [])
-    if tier:
-        rows = [f for f in rows if str(f.get("tier", "")).lower() == tier.lower()]
-    if gene:
-        rows = [f for f in rows if gene.lower() in str(f.get("gene") or "").lower()]
-    if topic:
-        rows = [f for f in rows if str(f.get("topic", "")).lower() == topic.lower()]
+    rows = [
+        finding for finding in doc.get("findings", [])
+        if _match(
+            finding, tier=tier, gene=gene, topic=topic, condition=condition,
+            classification=classification, direction=direction,
+            predicted=predicted, risk_allele_carried=risk_allele_carried,
+        )
+    ]
     rows.sort(key=lambda f: f.get("magnitude") or 0.0, reverse=True)
 
     total = len(rows)
@@ -116,10 +165,46 @@ def query_findings(read_report, report_id: str, tier: str = "", gene: str = "",
     limit = max(1, min(int(limit), MAX_FINDINGS_PER_CALL))
     page = rows[offset:offset + limit]
     return {"status": "ready", "report_id": report_id,
-            "total_matching": total, "offset": offset, "returned": len(page),
+            "total_matching": total, "n_matching": total,
+            "offset": offset, "returned": len(page),
             "more": offset + len(page) < total,
             **_limits_note(doc),
-            "findings": page}
+            "findings": page, "disclaimer": DISCLAIMER}
+
+
+def important_findings(read_report, report_id: str) -> dict:
+    """Return the findings placed first by report promotion rules."""
+    bad = _bad_id(report_id)
+    if bad:
+        return bad
+    doc, state = _read_ready_report(read_report, report_id)
+    if state is not None:
+        return state
+    return {
+        "status": "ready", "report_id": report_id,
+        "findings": list(doc.get("important") or []),
+        "disclaimer": DISCLAIMER, **_limits_note(doc),
+    }
+
+
+def one_finding(read_report, report_id: str, marker: str) -> dict:
+    """Return one finding by its marker id."""
+    bad = _bad_id(report_id)
+    if bad:
+        return bad
+    doc, state = _read_ready_report(read_report, report_id)
+    if state is not None:
+        return state
+    for finding in doc.get("findings", []):
+        if str(finding.get("marker", "")).lower() == marker.lower():
+            return {
+                "status": "ready", "report_id": report_id,
+                "finding": finding, "disclaimer": DISCLAIMER,
+                **_limits_note(doc),
+            }
+    return {
+        "error": f"no finding for marker {marker}", "disclaimer": DISCLAIMER,
+    }
 
 
 def build_mcp(read_report):
@@ -155,22 +240,41 @@ def build_mcp(read_report):
 
     @mcp.tool(structured_output=True)
     def get_findings(report_id: str, tier: str = "", gene: str = "",
-                     topic: str = "", limit: int = MAX_FINDINGS_PER_CALL,
+                     topic: str = "", condition: str = "",
+                     classification: str = "", direction: str = "",
+                     predicted: bool | None = None,
+                     risk_allele_carried: bool | None = None,
+                     limit: int = MAX_FINDINGS_PER_CALL,
                      offset: int = 0) -> ToolResult:
         """Query the findings in a finished DNA-Report.
 
-        tier filters by strength of evidence ('robust', 'moderate',
-        'speculative', 'unknown'); gene and topic filter by those fields. Results
-        are ordered strongest-evidence-first by the same magnitude score the
-        report itself uses — that ordering is about evidence, not about clinical
-        importance, which nothing here is in a position to rank.
+        Filter research associations by evidence, gene, topic, condition,
+        classification, direction, prediction, or carried risk allele.
 
-        Always returns `bounded` and `limits`: if `bounded` is true the underlying
-        report is already a truncated view, and no amount of paging will reach the
-        findings it left out.
+        Results include `interpretation.next_step` when the report provides it.
         """
         return query_findings(read_report, report_id, tier=tier, gene=gene,
-                              topic=topic, limit=limit, offset=offset)
+                              topic=topic, condition=condition,
+                              classification=classification, direction=direction,
+                              predicted=predicted,
+                              risk_allele_carried=risk_allele_carried,
+                              limit=limit, offset=offset)
+
+    @mcp.tool(structured_output=True)
+    def get_important_findings(report_id: str) -> ToolResult:
+        """Return research findings that the report places first.
+
+        Each result states its promotion reason and includes the next step.
+        """
+        return important_findings(read_report, report_id)
+
+    @mcp.tool(structured_output=True)
+    def get_finding(report_id: str, marker: str) -> ToolResult:
+        """Return one research finding by marker.
+
+        The result includes its interpretation and evidence chain.
+        """
+        return one_finding(read_report, report_id, marker)
 
     return mcp
 

@@ -182,7 +182,9 @@ def test_both_tools_are_advertised_with_an_output_schema(mcp_client):
     result = r.json()["result"]
     assert result["resultType"] == "complete"
     names = {t["name"] for t in result["tools"]}
-    assert names == {"get_report_summary", "get_findings"}
+    assert names == {
+        "get_report_summary", "get_findings", "get_important_findings", "get_finding",
+    }
     # an agent should receive data, not JSON embedded in prose it has to re-parse
     assert all("outputSchema" in t for t in result["tools"])
 
