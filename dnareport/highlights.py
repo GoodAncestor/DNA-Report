@@ -75,7 +75,7 @@ def _clock_tiles(result) -> str:
             pct = max(0.0, min(1.0, getattr(c, "coverage", 0.0))) * 100
             tiles.append(f"""<div class="tile">
   <div class="tval">{c.age:.1f}<span class="tunit">yrs</span></div>
-  <div class="tname">{_e(c.clock)}</div>
+  <div class="tname">{_e(c.clock)}</div>{_acceleration_html(c)}
   <div class="tmeter"><i style="width:{pct:.0f}%"></i></div>
   <div class="tnote">{_e(_tile_note(c, True))}</div>
 </div>""")
@@ -89,6 +89,72 @@ def _clock_tiles(result) -> str:
         return ""
     return f"""<h3 class="sub">Epigenetic age</h3>
 <div class="tiles">{''.join(tiles)}</div>{_mismatch_note(result)}"""
+
+
+def _acceleration_html(c) -> str:
+    """How far this clock sits from the person's actual age. Only when the age
+    was given (the composer sets acceleration only then) and the clock is valid."""
+    acc = getattr(c, "acceleration", None)
+    if acc is None:
+        return ""
+    if abs(acc) < 0.5:
+        return "<div class='tacc even'>about your age</div>"
+    word = "older" if acc > 0 else "younger"
+    return (f"<div class='tacc {'up' if acc > 0 else 'down'}'>{acc:+.1f} yrs {word} "
+            f"than your age</div>")
+
+
+def person_line(result) -> str:
+    """One line above the snapshot: what we know about the person and where it
+    came from. A guess is labelled as one, never shown as the person's fact."""
+    bits = []
+    age = getattr(result, "age", None)
+    if age is not None:
+        src = getattr(result, "age_source", None)
+        if src == "guess":
+            bits.append(f"Age about {float(age):.0f} <span class='psrc'>(estimated from the clocks; "
+                        f"enter your age on the upload form to see how far they sit from it)</span>")
+        else:
+            bits.append(f"Age {float(age):.0f} <span class='psrc'>(your entry)</span>")
+    sex = getattr(result, "sex", None)
+    if sex:
+        src = getattr(result, "sex_source", None)
+        note = ("estimated from your file; correct it on the upload form if wrong"
+                if src == "guess" else "your entry")
+        bits.append(f"Sex {_e(str(sex))} <span class='psrc'>({note})</span>")
+    if not bits:
+        return ""
+    return "<p class='person'>" + " <span class='psep'>·</span> ".join(bits) + "</p>"
+
+
+def clock_moves_html(result) -> str:
+    """"What moves your clock": the sites that weigh most in the valid clocks'
+    estimates, as signed bars. Contributions are relative to a zero reading."""
+    try:
+        from methylask.clocks import top_contributions
+    except ImportError:
+        return ""
+    rows = []
+    for c in (getattr(result, "clocks", None) or []):
+        if not getattr(c, "valid", False) or not getattr(c, "contributions", None):
+            continue
+        for probe, coef, beta, value, years in top_contributions(c, n=6):
+            rows.append((c.clock, probe, years))
+    if not rows:
+        return ""
+    rows.sort(key=lambda r: -abs(r[2]))
+    rows = rows[:8]
+    scale = max(abs(r[2]) for r in rows) or 1.0
+    bars = "".join(
+        f"<div class='mv'><a class='mvp' href='#' data-marker='{_e(probe)}'>{_e(probe)}</a>"
+        f"<span class='mvc'>{_e(clock.split('_')[0])}</span>"
+        f"<span class='mvbar {'up' if yrs > 0 else 'down'}'><i style='width:{abs(yrs) / scale * 100:.0f}%'></i></span>"
+        f"<span class='mvv'>{yrs:+.1f} yrs</span></div>"
+        for clock, probe, yrs in rows)
+    return f"""<h3 class="sub">What moves your clock</h3>
+<div class="moves">{bars}</div>
+<p class="tmismatch">Contributions are relative to a zero reading at each site, not to other people.
+A population reference per site is a later addition.</p>"""
 
 
 def _mismatch_note(result) -> str:
@@ -186,12 +252,15 @@ def highlights_html(result) -> str:
     exposure = f"""<h3 class="sub">Exposure markers</h3>
 <div class="xcards">{cards}</div>""" if highlights else ""
 
+    moves = clock_moves_html(result) if clocks else ""
     return f"""<section class="snapshot">
+  {person_line(result)}
   <div class="shead">
     <h2>Biological snapshot</h2>
     <span class="chip">{_e(tis)}</span>
   </div>
   {clocks}
+  {moves}
   {exposure}
 {_STYLE}
 </section>"""
@@ -225,6 +294,19 @@ _STYLE = """<style>
   overflow:hidden;margin-bottom:7px}
 .snapshot .tmeter i{display:block;height:100%;background:var(--accent)}
 .snapshot .tnote{font-size:12px;color:var(--faint);line-height:1.45}
+.snapshot .tacc{font:600 12px/1.3 var(--sans);margin:2px 0 7px}
+.snapshot .tacc.up{color:#8a4b2a}.snapshot .tacc.down{color:var(--accent)}.snapshot .tacc.even{color:var(--mut)}
+.snapshot .person{font:400 13.5px/1.5 var(--sans);color:var(--ink);margin:0 0 10px}
+.snapshot .psrc{color:var(--faint)}.snapshot .psep{color:var(--hair);margin:0 6px}
+.snapshot .moves{display:grid;gap:5px}
+.snapshot .mv{display:grid;grid-template-columns:110px 70px minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:12px}
+.snapshot .mvp{font-family:var(--mono);color:var(--mut);text-decoration:none}
+.snapshot .mvc{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.snapshot .mvbar{height:7px;background:var(--line);border-radius:3px;overflow:hidden}
+.snapshot .mvbar i{display:block;height:100%}
+.snapshot .mvbar.up i{background:#c2683c}.snapshot .mvbar.down i{background:var(--accent)}
+.snapshot .mvv{font-family:var(--mono);font-size:11.5px;color:var(--ink);text-align:right}
+@media(prefers-color-scheme:dark){.snapshot .tacc.up{color:#d6905f}.snapshot .mvbar.up i{background:#d98a5c}}
 /* the withheld-clock reason: readable rather than fine print, since it is the
    difference between "no number" and "a number that would have misled you" */
 .snapshot .tmismatch{font-size:13px;color:var(--mut);line-height:1.5;

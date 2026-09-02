@@ -225,6 +225,25 @@ _LANDING_TEMPLATE = """<!doctype html>
      </div>
 
      <div class="field">
+       <label for="age">Age</label>
+       <input id="age" type="number" inputmode="numeric" min="0" max="120" step="1" placeholder="years" style="width:7em">
+       <span class="hint">Optional. Your age lets the epigenetic clocks show how far they sit from it.
+         We estimate it from your file and show the estimate.</span>
+     </div>
+
+     <div class="field">
+       <label for="sex">Sex</label>
+       <select id="sex">
+         <option value="">Not given</option>
+         <option value="female">Female</option>
+         <option value="male">Male</option>
+         <option value="other">Other</option>
+       </select>
+       <span class="hint">Optional. Used for X-linked findings and for which references apply.
+         We estimate it from your file and show the estimate.</span>
+     </div>
+
+     <div class="field">
        <label for="notify_email">Email me</label>
        <input id="notify_email" type="email" placeholder="you@example.com" autocomplete="email">
        <span class="hint">Optional. Large genomes can take a few minutes; give an email only
@@ -455,6 +474,7 @@ _LANDING_TEMPLATE = """<!doctype html>
  const drop=document.getElementById('drop'), fileIn=document.getElementById('file'),
    go=document.getElementById('go'), statusEl=document.getElementById('status'),
    tissue=document.getElementById('tissue'), recog=document.getElementById('recog'),
+   ageIn=document.getElementById('age'), sexIn=document.getElementById('sex'),
    recogName=document.getElementById('recog-name'), recogMeta=document.getElementById('recog-meta');
  let chosen=null;
 
@@ -824,7 +844,7 @@ _LANDING_TEMPLATE = """<!doctype html>
      const r=await fetch('/analyze/r2',{method:'POST',
        headers:{'content-type':'application/json','Accept':'text/html',
                 'X-Error-Format':'json'},
-       body:JSON.stringify({key:sign.key,tissue:tissue.value||''})});
+       body:JSON.stringify({key:sign.key,tissue:tissue.value||'',age:ageIn.value||'',sex:sexIn.value||''})});
      const ct=r.headers.get('content-type')||'';
      // same rule as the inline path: only a SUCCESSFUL html response may replace
      // this page, so an edge error page can never be grafted in as a report
@@ -903,6 +923,8 @@ _LANDING_TEMPLATE = """<!doctype html>
      statusEl.textContent='Analyzing\\u2026 this runs on the server and may take a moment.';
      const fd=new FormData(); fd.append('file',payload);
      if(tissue.value)fd.append('tissue',tissue.value);
+     if(ageIn.value)fd.append('age',ageIn.value);
+     if(sexIn.value)fd.append('sex',sexIn.value);
      // Opt-ins ARE sent here now. They used to be omitted because /analyze
      // returned the report in this response, leaving nothing to notify about;
      // every upload is now handed to a worker, so a file posted here runs later

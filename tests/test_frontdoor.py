@@ -181,3 +181,11 @@ def test_genome_demo_is_served_and_listed():
 def test_landing_explains_moderate():
     from dnareport.landing import LANDING_HTML
     assert "<b>Moderate</b>" in LANDING_HTML
+
+
+def test_landing_asks_for_age_and_sex_optionally_and_posts_them():
+    from dnareport.landing import LANDING_HTML
+    assert 'id="age"' in LANDING_HTML and 'id="sex"' in LANDING_HTML
+    assert "We estimate it from your file" in LANDING_HTML
+    assert "fd.append('age',ageIn.value)" in LANDING_HTML
+    assert "age:ageIn.value||''" in LANDING_HTML and "sex:sexIn.value||''" in LANDING_HTML
