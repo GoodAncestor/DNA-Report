@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 
 
 PROMPT_VERSION = "1"
@@ -120,3 +121,50 @@ def build_prompt(facts: dict) -> tuple[str, str]:
     return _SYSTEM.format(version=PROMPT_VERSION), json.dumps(
         facts, indent=1, sort_keys=True
     )
+
+
+_FORBIDDEN = (
+    "you have ",
+    "you will ",
+    "you'll ",
+    "diagnos",
+    "you are at risk",
+    "you suffer",
+    "guarantee",
+    "certainly",
+    "definitely",
+)
+_BANNED = re.compile(
+    r"honest|it's not |not a [A-Z]|the point is|worth (noting|being explicit)"
+    r"|in other words|crucially|importantly,|notably,|by design|buckle up|dive in",
+    re.I,
+)
+_CITATION = re.compile(r"\[([^\]]{1,80})\]")
+MAX_WORDS = 180
+
+
+def check_draft(text: str, facts: dict) -> str | None:
+    """Return a short rejection reason, or ``None`` for an accepted draft."""
+    draft = (text or "").strip()
+    if not draft:
+        return "empty"
+    if len(draft.split()) > MAX_WORDS:
+        return "too long"
+
+    lowered = draft.lower()
+    for phrase in _FORBIDDEN:
+        if phrase in lowered:
+            return f"forbidden phrase: {phrase.strip()}"
+
+    banned = _BANNED.search(draft)
+    if banned:
+        return f"banned construction: {banned.group(0)}"
+
+    labels = {link.get("label") for link in (facts.get("chain") or [])}
+    citations = _CITATION.findall(draft)
+    if not citations:
+        return "no citation"
+    for citation in citations:
+        if citation not in labels:
+            return f"unknown citation: {citation}"
+    return None
