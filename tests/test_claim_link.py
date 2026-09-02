@@ -98,12 +98,12 @@ def test_the_claim_link_serves_markdown(monkeypatch):
 
 def test_the_claim_link_serves_json(monkeypatch):
     monkeypatch.setattr(web, "_r2_result_html",
-                        lambda job, fmt="html": '{"schema_version": "1.2"}'
+                        lambda job, fmt="html": '{"schema_version": "2.0"}'
                         if fmt == "json" else None)
     r = client.get(f"/result/{_job()}?format=json")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/json")
-    assert r.json()["schema_version"] == "1.2"
+    assert r.json()["schema_version"] == "2.0"
 
 
 def test_an_agent_can_ask_by_accept_header(monkeypatch):

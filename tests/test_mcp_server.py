@@ -2,7 +2,7 @@
 
 A finished report can hold hundreds of thousands of findings, so an agent must be
 able to get an account of it and then query, rather than swallow a document. The
-properties tested here are less about MCP than about honesty: a truncated report
+properties tested here are less about MCP than about accuracy: a truncated report
 has to announce itself on every response that returns findings, and "still
 running", "failed" and "no such report" have to be distinguishable — an agent that
 cannot tell them apart will poll a dead job for ever or abandon a live one.
@@ -13,7 +13,7 @@ from dnareport.mcp_server import (MCP_ALLOWED_HOSTS, _bad_id, query_findings,
                                   summarise)
 
 REPORT = {
-    "schema_version": "1.2",
+    "schema_version": "2.0",
     "summary": {"n_findings": 3, "bounded": True,
                 "limits": {"gwas_catalog": {"shown": 1000, "found": 442719}}},
     "notes": ["GWAS Catalog: showing the 1000 most significant of 442719 found"],
@@ -55,7 +55,7 @@ def test_the_summary_carries_the_counts_and_the_caveats():
     assert out["status"] == "ready"
     assert out["summary"]["n_findings"] == 3
     assert out["summary"]["report_id"] == ID
-    assert out["summary"]["schema_version"] == "1.2"
+    assert out["summary"]["schema_version"] == "2.0"
     assert any("442719" in c for c in out["summary"]["caveats"])
 
 

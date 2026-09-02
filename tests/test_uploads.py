@@ -201,7 +201,7 @@ def test_json_findings_carry_magnitude_and_direction():
     j = _finding_json(pathogenic, None)
     assert j["direction"] == "adverse"
     assert 4.0 <= j["magnitude"] <= 7.0        # inside the MODERATE band
-    assert SCHEMA_VERSION == "1.2"
+    assert SCHEMA_VERSION == "2.0"
 
 
 def test_json_direction_is_empty_for_unclassified_findings():

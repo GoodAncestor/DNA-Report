@@ -13,13 +13,10 @@ protein resolvers), so JSON and HTML agree on where an entity points.
 from __future__ import annotations
 import os
 
-# 1.1 adds `magnitude` and `direction` per finding and `by_direction` to the
-# summary. 1.2 adds `scan_stats`: what was scanned and what was left out. Without
-# it an agent cannot tell a bounded report from a complete one — it would read
-# 1,000 GWAS associations as all of them, which is the same failure as a human
-# reader who never sees the truncation notice. Purely additive, so a 1.0 consumer
-# keeps working — the version moves so one can feature-detect rather than probe.
-SCHEMA_VERSION = "1.2"
+# 2.0 keeps the complete Finding, including detail, interpretation, evidence,
+# promotion, and deeper-dive fields. It also adds important and provider_status.
+# The derived 1.x keys remain available for existing consumers.
+SCHEMA_VERSION = "2.0"
 
 
 def _magnitude(f) -> float | None:
@@ -123,10 +120,22 @@ def _finding_json(f, marker_url) -> dict:
         links["protein"] = f"https://www.uniprot.org/uniprotkb/{protein}"
     if f.link:
         links["source"] = f.link
-    return {
-        "marker": f.marker,
-        "description": f.description,
-        "tier": f.tier.value,
+    if hasattr(f, "to_dict"):
+        base = f.to_dict()
+    else:
+        base = {
+            "marker": f.marker, "source": f.source,
+            "description": f.description,
+            "tier": getattr(f.tier, "value", str(f.tier)),
+            "categories": [getattr(category, "value", str(category))
+                           for category in (getattr(f, "categories", None) or [])],
+            "detail": dict(d), "link": getattr(f, "link", None),
+            "pmids": list(getattr(f, "pmids", None) or []),
+            "interpretation": None, "evidence_chain": [], "promoted": False,
+            "promoted_reason": "", "deeper_dive": None,
+            "deeper_dive_meta": {},
+        }
+    base.update({
         # The two ranking fields the HTML report shows. An agent consuming this
         # would otherwise have to re-derive them from `stats` and re-implement
         # the tier banding and ClinVar precedence rules to sort or triage.
@@ -136,12 +145,11 @@ def _finding_json(f, marker_url) -> dict:
         "gene": gene,
         "protein": protein,
         "trait": d.get("trait"),
-        "source": f.source,
-        "pmids": list(f.pmids or []),
         "stats": {k: d.get(k) for k in ("beta", "se", "p", "n", "tissue")
                   if d.get(k) not in (None, "")},
         "links": links,
-    }
+    })
+    return base
 
 
 def _clock_json(cl) -> dict:
@@ -189,6 +197,16 @@ def result_to_json(result, marker_url=None) -> dict:
         },
         "clocks": [_clock_json(c) for c in result.clocks],
         "findings": findings,
+        "important": [finding for finding in findings if finding.get("promoted")],
+        "provider_status": [
+            {
+                "name": status.name,
+                "health": getattr(status.health, "value", str(status.health)),
+                "note": getattr(status, "note", None),
+                "version": getattr(status, "version", None),
+            }
+            for status in (getattr(result, "provider_status", None) or [])
+        ],
         "notes": list(result.notes or []),
         "scan_stats": dict(getattr(result, "scan_stats", None) or {}),
     }
