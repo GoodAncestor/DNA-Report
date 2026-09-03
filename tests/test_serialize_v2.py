@@ -4,8 +4,11 @@ from biocore.providers.base import (
     Category, ChainLink, Finding, Health, Interpretation, ProviderStatus, Tier,
 )
 from dnareport.detect import InputKind
+from dnareport.action_plan import Action
+from dnareport.outcomes import Outcome
 from dnareport.orchestrate import ReportResult
 from dnareport.serialize import SCHEMA_VERSION, result_to_json
+from geneask.interpret.polygenic import CAVEAT, TraitScore
 
 
 def _brca2():
@@ -39,7 +42,7 @@ def test_json_is_lossless_and_versioned():
         ProviderStatus(name="clinvar_mirror", health=Health.OK, version="schema 2")
     ]
     doc = result_to_json(result)
-    assert SCHEMA_VERSION == "2.0" and doc["schema_version"] == "2.0"
+    assert SCHEMA_VERSION == "2.1" and doc["schema_version"] == "2.1"
     finding = doc["findings"][0]
     assert finding["detail"]["conditions"] == [
         "Hereditary breast ovarian cancer syndrome"
@@ -54,3 +57,52 @@ def test_json_is_lossless_and_versioned():
     assert doc["important"][0]["marker"] == "13-32316419-CAG-C"
     assert doc["provider_status"][0]["health"] == "ok"
     json.dumps(doc)
+
+
+def test_json_carries_person_scores_outcomes_and_actions():
+    result = ReportResult(
+        kind=InputKind.VCF,
+        engines=("geneask",),
+        age=48,
+        age_source="guess",
+        sex="female",
+        sex_source="guess",
+    )
+    score = TraitScore(
+        trait="BMI",
+        efo="EFO_0004340",
+        n_variants=3,
+        n_with_af=3,
+        score=1.2,
+        mean=0.4,
+        sd=0.5,
+        z=1.6,
+        percentile=90,
+        direction_word="higher",
+        top=[("rs1", "GENE1", 0.5)],
+        caveat=CAVEAT,
+    )
+    action = Action(
+        text="Consider another medicine.",
+        why="CPIC publishes guidance.",
+        source_label="CPIC",
+        url="https://cpicpgx.org/",
+        outcome_key="medicine:medicine",
+    )
+    result.trait_scores = [score]
+    result.outcomes = [Outcome("trait:bmi", "BMI", "trait", [], score, [], [], [])]
+    result.actions = [action]
+
+    doc = result_to_json(result)
+
+    assert doc["person"] == {
+        "age": 48,
+        "age_source": "guess",
+        "sex": "female",
+        "sex_source": "guess",
+    }
+    assert doc["trait_scores"][0]["percentile"] == 90
+    assert doc["trait_scores"][0]["caveat"] == CAVEAT
+    assert doc["outcomes"][0]["finding_markers"] == []
+    assert doc["outcomes"][0]["score"]["trait"] == "BMI"
+    assert doc["actions"][0]["source_label"] == "CPIC"

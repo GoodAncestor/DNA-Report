@@ -207,6 +207,48 @@ def one_finding(read_report, report_id: str, marker: str) -> dict:
     }
 
 
+def _outcomes_response(read_report, report_id: str) -> dict:
+    bad = _bad_id(report_id)
+    if bad:
+        return bad
+    doc, state = _read_ready_report(read_report, report_id)
+    if state is not None:
+        return state
+    return {
+        "status": "ready",
+        "report_id": report_id,
+        "outcomes": list(doc.get("outcomes") or []),
+        "disclaimer": DISCLAIMER,
+        **_limits_note(doc),
+    }
+
+
+def get_outcomes(read_report, report_id: str) -> dict:
+    """Return the report's findings grouped by outcome."""
+    return _outcomes_response(read_report, report_id)
+
+
+def _actions_response(read_report, report_id: str) -> dict:
+    bad = _bad_id(report_id)
+    if bad:
+        return bad
+    doc, state = _read_ready_report(read_report, report_id)
+    if state is not None:
+        return state
+    return {
+        "status": "ready",
+        "report_id": report_id,
+        "actions": list(doc.get("actions") or []),
+        "disclaimer": DISCLAIMER,
+        **_limits_note(doc),
+    }
+
+
+def get_actions(read_report, report_id: str) -> dict:
+    """Return actions that have one of the approved published bases."""
+    return _actions_response(read_report, report_id)
+
+
 def build_mcp(read_report):
     """Construct the MCP server. `read_report(report_id)` returns either
     {"status": "ready", "report": <the published JSON>} or a status dict
@@ -275,6 +317,16 @@ def build_mcp(read_report):
         The result includes its interpretation and evidence chain.
         """
         return one_finding(read_report, report_id, marker)
+
+    @mcp.tool(structured_output=True)
+    def get_outcomes(report_id: str) -> ToolResult:
+        """Return findings grouped by condition, medicine, trait, or age."""
+        return _outcomes_response(read_report, report_id)
+
+    @mcp.tool(structured_output=True)
+    def get_actions(report_id: str) -> ToolResult:
+        """Return actions backed by ClinGen, CPIC, ACMG, or smoking evidence."""
+        return _actions_response(read_report, report_id)
 
     return mcp
 

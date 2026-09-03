@@ -175,7 +175,7 @@ def test_the_endpoint_is_where_the_mount_point_says(mcp_client):
     assert r.status_code == 200, r.text
 
 
-def test_both_tools_are_advertised_with_an_output_schema(mcp_client):
+def test_all_tools_are_advertised_with_an_output_schema(mcp_client):
     r = mcp_client.post("/mcp", headers={**_HDRS, "Mcp-Method": "tools/list"},
                         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list",
                               "params": {"_meta": _META}})
@@ -184,6 +184,7 @@ def test_both_tools_are_advertised_with_an_output_schema(mcp_client):
     names = {t["name"] for t in result["tools"]}
     assert names == {
         "get_report_summary", "get_findings", "get_important_findings", "get_finding",
+        "get_outcomes", "get_actions",
     }
     # an agent should receive data, not JSON embedded in prose it has to re-parse
     assert all("outputSchema" in t for t in result["tools"])

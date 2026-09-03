@@ -12,11 +12,12 @@ protein resolvers), so JSON and HTML agree on where an entity points.
 """
 from __future__ import annotations
 import os
+from dataclasses import asdict, is_dataclass
 
-# 2.0 keeps the complete Finding, including detail, interpretation, evidence,
-# promotion, and deeper-dive fields. It also adds important and provider_status.
+# 2.1 keeps the complete Finding, including detail, interpretation, evidence,
+# promotion, and deeper-dive fields. It adds baselines and outcome groupings.
 # The derived 1.x keys remain available for existing consumers.
-SCHEMA_VERSION = "2.0"
+SCHEMA_VERSION = "2.1"
 
 
 def _magnitude(f) -> float | None:
@@ -162,6 +163,38 @@ def _clock_json(cl) -> dict:
         "implausible": getattr(cl, "implausible", False),
         "coverage": getattr(cl, "coverage", None),
         "note": cl.note,
+        "acceleration": getattr(cl, "acceleration", None),
+        "contributions": list(getattr(cl, "contributions", None) or []),
+    }
+
+
+def _plain(value) -> dict:
+    if is_dataclass(value):
+        return asdict(value)
+    return dict(vars(value))
+
+
+def _trait_score_json(score) -> dict:
+    row = _plain(score)
+    row["top"] = list(row.get("top") or [])
+    return row
+
+
+def _action_json(action) -> dict:
+    return _plain(action)
+
+
+def _outcome_json(outcome) -> dict:
+    score = getattr(outcome, "score", None)
+    return {
+        "key": outcome.key,
+        "label": outcome.label,
+        "kind": outcome.kind,
+        "finding_markers": [finding.marker for finding in outcome.findings],
+        "score": _trait_score_json(score) if score is not None else None,
+        "contributions": list(outcome.contributions or []),
+        "reference_groups": list(outcome.reference_groups or []),
+        "actions": [_action_json(action) for action in (outcome.actions or [])],
     }
 
 
@@ -182,6 +215,12 @@ def result_to_json(result, marker_url=None) -> dict:
         "input_kind": getattr(result.kind, "value", str(result.kind)),
         "tissue": result.tissue,
         "engines": list(result.engines),
+        "person": {
+            "age": getattr(result, "age", None),
+            "age_source": getattr(result, "age_source", None),
+            "sex": getattr(result, "sex", None),
+            "sex_source": getattr(result, "sex_source", None),
+        },
         # ONE summary. It carries the counts AND the whole-report account —
         # `bounded`, `limits`, `strongest` — because two summary blocks in one
         # document are two things that can disagree about the same genome.
@@ -206,6 +245,18 @@ def result_to_json(result, marker_url=None) -> dict:
                 "version": getattr(status, "version", None),
             }
             for status in (getattr(result, "provider_status", None) or [])
+        ],
+        "trait_scores": [
+            _trait_score_json(score)
+            for score in (getattr(result, "trait_scores", None) or [])
+        ],
+        "outcomes": [
+            _outcome_json(outcome)
+            for outcome in (getattr(result, "outcomes", None) or [])
+        ],
+        "actions": [
+            _action_json(action)
+            for action in (getattr(result, "actions", None) or [])
         ],
         "notes": list(result.notes or []),
         "scan_stats": dict(getattr(result, "scan_stats", None) or {}),

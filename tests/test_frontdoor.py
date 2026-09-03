@@ -80,7 +80,7 @@ def test_json_with_key_returns_schema():
     r = client.get("/demo/blood?format=json&api_key=test-key")
     assert r.status_code == 200
     j = r.json()
-    assert j["schema_version"] == "2.0"
+    assert j["schema_version"] == "2.1"
     # scan_stats is what lets a machine reader tell a bounded report from a
     # complete one, so its presence is part of the contract, not a detail
     assert "scan_stats" in j

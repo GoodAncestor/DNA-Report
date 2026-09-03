@@ -1,4 +1,10 @@
-from dnareport.mcp_server import important_findings, one_finding, query_findings
+from dnareport.mcp_server import (
+    get_actions,
+    get_outcomes,
+    important_findings,
+    one_finding,
+    query_findings,
+)
 
 
 _ID = "c" * 32
@@ -25,6 +31,8 @@ _DOC = {
         },
     ],
     "important": [], "summary": {}, "scan_stats": {},
+    "outcomes": [{"key": "condition:hboc", "label": "HBOC", "kind": "condition"}],
+    "actions": [{"text": "Confirm the result.", "source_label": "ACMG"}],
 }
 _DOC["important"] = [_DOC["findings"][0]]
 
@@ -59,3 +67,12 @@ def test_one_finding_by_marker():
     assert result["finding"]["gene"] == "TCF7L2"
     assert "disclaimer" in result
     assert one_finding(_read, _ID, "rs0")["error"].startswith("no finding")
+
+
+def test_outcomes_and_actions_have_dedicated_tools():
+    outcomes = get_outcomes(_read, _ID)
+    actions = get_actions(_read, _ID)
+
+    assert outcomes["outcomes"][0]["key"] == "condition:hboc"
+    assert actions["actions"][0]["source_label"] == "ACMG"
+    assert "disclaimer" in outcomes and "disclaimer" in actions

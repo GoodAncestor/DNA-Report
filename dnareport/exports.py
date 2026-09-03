@@ -28,7 +28,7 @@ _TIER_ORDER = {"robust": 0, "moderate": 1, "speculative": 2, "unknown": 3}
 #: Bumped whenever the Markdown's STRUCTURE changes — headings, front-matter keys,
 #: ordering. Prose edits do not move it. It exists so an agent parsing this file
 #: can refuse a shape it does not know instead of silently mis-reading one.
-MARKDOWN_FORMAT_VERSION = "2.0"
+MARKDOWN_FORMAT_VERSION = "2.1"
 
 
 def report_json(result, marker_url=None) -> str:
@@ -57,6 +57,49 @@ def _category_of(f) -> str:
     for c in cats:
         return getattr(c, "value", str(c)).title()
     return "Other"
+
+
+def _person_line(person: dict) -> str:
+    parts = []
+    age = person.get("age")
+    if age is not None:
+        age_text = f"{float(age):g}"
+        if person.get("age_source") == "guess":
+            parts.append(f"Age about {age_text} (estimated from the clocks)")
+        elif person.get("age_source") == "user":
+            parts.append(f"Age {age_text} (your entry)")
+        else:
+            parts.append(f"Age {age_text}")
+    sex = person.get("sex")
+    if sex:
+        if person.get("sex_source") == "guess":
+            parts.append(f"Sex {sex} (estimated from the file)")
+        elif person.get("sex_source") == "user":
+            parts.append(f"Sex {sex} (your entry)")
+        else:
+            parts.append(f"Sex {sex}")
+    return " · ".join(parts)
+
+
+def _score_sentence(score: dict, label: str) -> str:
+    trait = str(score.get("trait") or label).casefold()
+    direction = score.get("direction_word")
+    percentile = int(score["percentile"])
+    if direction == "lower":
+        comparison = 100 - percentile
+        return (
+            f"Your weighted count of studied risk alleles for {trait} is lower "
+            f"than about {comparison}% of people in the reference set."
+        )
+    if direction == "about average":
+        return (
+            f"Your weighted count of studied risk alleles for {trait} sits near "
+            "the middle of the reference set."
+        )
+    return (
+        f"Your weighted count of studied risk alleles for {trait} is higher than "
+        f"about {percentile}% of people in the reference set."
+    )
 
 
 def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
@@ -148,6 +191,9 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     if result.tissue:
         head.append(f"Tissue: {result.tissue}")
     out += ["  \n".join(head), ""]
+    person_line = _person_line(doc.get("person") or {})
+    if person_line:
+        out += [f"Your age and sex: {person_line}", ""]
 
     if doc.get("important"):
         out += [
@@ -159,6 +205,31 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
         for finding in doc["important"]:
             out.append(f"**Why:** {finding.get('promoted_reason', '')}")
             out += finding_block(finding) + [""]
+
+    if doc.get("actions"):
+        out += [
+            "## What people do with results like these",
+            "",
+            "These items have a published basis.",
+            "",
+        ]
+        for action in doc["actions"]:
+            source = action.get("source_label") or "Source"
+            if action.get("url"):
+                source = f"[{source}]({action['url']})"
+            out.append(f"- {action['text']}")
+            out.append(f"  <br>{action['why']} · {source}")
+        out += ["", "A clinician can help place these items in context.", ""]
+
+    if doc.get("outcomes"):
+        out += ["## By outcome", ""]
+        for outcome in doc["outcomes"]:
+            out += [f"### {outcome['label']}", "", f"Kind: {outcome['kind']}."]
+            score = outcome.get("score")
+            if score and score.get("percentile") is not None:
+                out.append(_score_sentence(score, outcome["label"]))
+                out.append(str(score.get("caveat") or ""))
+            out.append("")
 
     # The summary comes first because this file is routinely longer than anything
     # that will be read whole — by a person or by a model with a context limit.
