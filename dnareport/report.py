@@ -87,7 +87,7 @@ def _render_with_views(result, out_path: str) -> str:
                        title="DNA-Report", marker_url=_marker_url,
                        scan_stats=result.scan_stats,
                        read_first=list(getattr(result, "read_first", None) or []),
-                       outcomes=list(outcomes) if outcomes is not None else None,
+                       outcomes=list(outcomes) if outcomes else None,   # no tab for an empty view
                        actions=list(getattr(result, "actions", None) or []),
                        person=_person(result))
     with open(out_path, "w") as fh:

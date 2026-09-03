@@ -705,16 +705,7 @@ def analyze(path: str, *, trait_table: str | None = None,
         result.findings = aggregate_by_trait(result.findings, tissue)
     except ImportError:
         pass
-    _interpret_and_promote(result)
-    try:
-        from geneask.interpret.polygenic import trait_scores
-        result.trait_scores = trait_scores(result.findings)
-    except ImportError:
-        pass
-    from .action_plan import build_actions
-    from .outcomes import build_outcomes
-    result.actions = build_actions(result)
-    result.outcomes = build_outcomes(result)
+    finish(result)
     _apply_guesses(
         result,
         genome_calls=genome_context.get("calls") or [],
@@ -739,6 +730,23 @@ def _apply_guesses(result: "ReportResult", *, genome_calls: list, methyl_betas: 
         if sex is not None:
             result.sex = sex
             result.sex_source = "guess"
+
+
+def finish(result: "ReportResult") -> "ReportResult":
+    """Interpret, promote, group and plan, in that order. Every path that builds
+    a result — analysis, and the demo that merges two — runs this once, so the
+    views and exports never disagree about what was promoted."""
+    _interpret_and_promote(result)
+    try:
+        from geneask.interpret.polygenic import trait_scores
+        result.trait_scores = trait_scores(result.findings)
+    except ImportError:
+        pass
+    from .action_plan import build_actions
+    from .outcomes import build_outcomes
+    result.actions = build_actions(result)
+    result.outcomes = build_outcomes(result)
+    return result
 
 
 def _interpret_and_promote(result: "ReportResult") -> None:

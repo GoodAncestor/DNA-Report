@@ -766,6 +766,10 @@ def demo_combined(format: str = "", accept: str = Header(default=""),
         m.findings += g.findings
         m.engines = tuple(dict.fromkeys(list(m.engines) + list(g.engines)))
         m.notes += g.notes
+        # The merged report is interpreted, promoted and grouped again as a
+        # whole; each half's own promotions would otherwise be lost in the merge.
+        from .orchestrate import finish
+        finish(m)
         # Recompute the scan summary over BOTH halves. Keeping the methylome's
         # meant the panel described one half of a two-half report — the combined
         # demo printed "43 markers analysed" above 719 finding badges, and read

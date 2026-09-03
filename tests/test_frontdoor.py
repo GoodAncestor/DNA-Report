@@ -189,3 +189,8 @@ def test_landing_asks_for_age_and_sex_optionally_and_posts_them():
     assert "We estimate it from your file" in LANDING_HTML
     assert "fd.append('age',ageIn.value)" in LANDING_HTML
     assert "age:ageIn.value||''" in LANDING_HTML and "sex:sexIn.value||''" in LANDING_HTML
+
+
+def test_combined_demo_promotes_the_genome_half():
+    html = client.get("/demo/combined").text
+    assert "id='read-first'" in html and "BRCA2" in html
