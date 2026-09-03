@@ -193,4 +193,7 @@ def test_landing_asks_for_age_and_sex_optionally_and_posts_them():
 
 def test_combined_demo_promotes_the_genome_half():
     html = client.get("/demo/combined").text
-    assert "id='read-first'" in html and "BRCA2" in html
+    # the outcome view opens the report; its first cards are the promoted conditions
+    assert 'data-default-view="outcome"' in html
+    assert "data-outcome='condition:hereditary-breast-and-ovarian-cancer-syndrome'" in html
+    assert "Read this first" in html and "BRCA2" in html

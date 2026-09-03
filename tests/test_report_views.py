@@ -24,7 +24,7 @@ def test_report_html_carries_outcomes_actions_and_person():
     h = report_html(r)
     assert "data-outcome='hboc'" in h and "href='#view=outcome'" in h
     assert "What people do with results like these" in h and "Confirm with a clinical test." in h
-    assert "<section id='read-first' data-view='first'>" in h
+    assert "<section id='read-first'" not in h and 'data-default-view="outcome"' in h
 
 
 def test_report_html_without_outcomes_has_no_outcome_tab():
