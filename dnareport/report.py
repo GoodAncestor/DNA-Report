@@ -69,6 +69,32 @@ def compose_result_views(result, *, marker_url=None, filename: str = "") -> dict
     }
 
 
+def _person(result) -> dict | None:
+    """What the report may say about the person, with where each fact came from."""
+    d = {k: getattr(result, k, None) for k in ("age", "sex", "age_source", "sex_source")}
+    return d if (d["age"] is not None or d["sex"]) else None
+
+
+def _render_with_views(result, out_path: str) -> str:
+    """bio-core's renderer with the outcome view, the action plan and the person
+    line attached. The plain `orchestrate.render` stays for callers that have
+    none of those; this is the one place the product hands them over."""
+    from biocore.report.render import render_html
+    from .orchestrate import _disclaimer_path, _marker_url
+    outcomes = getattr(result, "outcomes", None)
+    html = render_html(result.findings, result.provider_status,
+                       disclaimer_path=_disclaimer_path(),
+                       title="DNA-Report", marker_url=_marker_url,
+                       scan_stats=result.scan_stats,
+                       read_first=list(getattr(result, "read_first", None) or []),
+                       outcomes=list(outcomes) if outcomes is not None else None,
+                       actions=list(getattr(result, "actions", None) or []),
+                       person=_person(result))
+    with open(out_path, "w") as fh:
+        fh.write(html)
+    return out_path
+
+
 def _render_findings(result, out_path: str) -> str:
     """The full report: highlights + bio-core's findings/disclaimer + notes +
     glossary.
@@ -118,7 +144,7 @@ def _render_findings(result, out_path: str) -> str:
     # file that contains all 442,719 is worse than no note at all.
     result.notes = original_notes + cap_notes
     try:
-        render(result, out_path)                   # bio-core findings + disclaimer
+        _render_with_views(result, out_path)      # bio-core findings + disclaimer + views
         body = Path(out_path).read_text()
         # notes_html reads result.notes, so the swap has to still be in place when
         # it runs — restoring first would drop the truncation notice from the very
