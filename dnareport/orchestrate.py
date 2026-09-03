@@ -151,7 +151,7 @@ def _reference_findings(betas: dict, tissue: str | None = None):
 def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
                    age: float | None = None,
                    max_markers: int | None = 40, notes: list | None = None,
-                   scan_stats: dict | None = None):
+                   scan_stats: dict | None = None, person_context: dict | None = None):
     """Call the MethylAsk engine -> (findings, provider_status, clocks). Import
     lazily so DNA-Report can run with only one engine installed.
 
@@ -183,6 +183,8 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
         # suffixes (cg#####_TC21); without stripping them every clock resolves
         # zero CpGs and the report silently shows no age.
         base_betas = {base_probe(k): v for k, v in sample.betas.items()}
+        if person_context is not None:
+            person_context["betas"] = base_betas
         # clocks run on the WHOLE profile (cheap arithmetic, no network)
         # MethylAsk gains the age parameter in Lane S3. Keep this commit usable
         # with the preceding engine revision while still passing age as soon as
@@ -279,7 +281,8 @@ def _pysam_readable(path: str, kind: InputKind, result: "ReportResult"):
 
 
 def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
-                 *, scan_stats: dict | None = None, statuses: list | None = None):
+                 *, scan_stats: dict | None = None, statuses: list | None = None,
+                 person_context: dict | None = None):
     """Interpret a single-sample VCF/23andMe callset -> (findings, status).
 
     Two screens: the ClinVar clinical panel (pathogenic/likely-pathogenic hits,
@@ -317,6 +320,19 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
                      "is the usual cause — upload the file exactly as downloaded.")
     if parsed is not None:
         scan_stats["markers_scanned"] = len(getattr(parsed, "records", None) or [])
+        if person_context is not None:
+            calls = []
+            for record in parsed.records:
+                if record.is_nocall:
+                    continue
+                if not record.allele2:
+                    zygosity = "hemi"
+                elif record.allele1 == record.allele2:
+                    zygosity = "hom"
+                else:
+                    zygosity = "het"
+                calls.append({"chrom": record.chrom, "zygosity": zygosity})
+            person_context["calls"] = calls
 
     # ClinVar clinical screen. Two input paths:
     #   VCF        -> bio-core carried_variants (pysam, REF/ALT already in the file)
@@ -341,6 +357,8 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
         else:
             from biocore.variants.carried import carried_variants
             carried = carried_variants(path)
+            if person_context is not None:
+                person_context["calls"] = carried
             scan_stats["markers_scanned"] = len(carried)
             if not carried:
                 notes.append(
@@ -654,12 +672,14 @@ def analyze(path: str, *, trait_table: str | None = None,
     # engines read `work`, which is `path` except for a plain-gzip VCF; scan_stats
     # keeps `path` so the report states the size of what the user actually uploaded.
     limits: dict[str, dict] = {}
+    methyl_context: dict = {}
+    genome_context: dict = {}
     with _pysam_readable(path, kind, result) as work:
         if "methylask" in engines:
             try:
                 f, st, clk = _run_methylask(
                     work, kind, tissue=tissue, age=age, notes=result.notes,
-                    scan_stats=result.scan_stats,
+                    scan_stats=result.scan_stats, person_context=methyl_context,
                 )
                 result.findings += f
                 result.provider_status += st
@@ -672,6 +692,7 @@ def analyze(path: str, *, trait_table: str | None = None,
                 f, gnotes, glimits = _run_geneask(
                     work, kind, trait_table=trait_table,
                     scan_stats=result.scan_stats, statuses=result.provider_status,
+                    person_context=genome_context,
                 )
                 result.findings += f
                 result.notes += gnotes
@@ -685,10 +706,30 @@ def analyze(path: str, *, trait_table: str | None = None,
     except ImportError:
         pass
     _interpret_and_promote(result)
+    _apply_guesses(
+        result,
+        genome_calls=genome_context.get("calls") or [],
+        methyl_betas=methyl_context.get("betas") or {},
+    )
     prior_limits = dict(result.scan_stats.get("limits") or {})
     result.scan_stats = _scan_stats(path, result)
     result.scan_stats["limits"] = {**prior_limits, **limits}
     return result
+
+
+def _apply_guesses(result: "ReportResult", *, genome_calls: list, methyl_betas: dict) -> None:
+    from .guess import guess_age, guess_sex_genome, guess_sex_methylome
+
+    if result.age is None:
+        age = guess_age(result.clocks)
+        if age is not None:
+            result.age = age
+            result.age_source = "guess"
+    if result.sex is None:
+        sex = guess_sex_genome(genome_calls) or guess_sex_methylome(methyl_betas)
+        if sex is not None:
+            result.sex = sex
+            result.sex_source = "guess"
 
 
 def _interpret_and_promote(result: "ReportResult") -> None:

@@ -1,0 +1,18 @@
+{
+  "probes": [
+    "cg05533223",
+    "cg03554089",
+    "cg12653510",
+    "cg11643285",
+    "cg10914153",
+    "cg26983535",
+    "cg05300123",
+    "cg25165578",
+    "cg22839831",
+    "cg20926353"
+  ],
+  "source": "Planned XIST and TSIX probes used in published sex-inference methods.",
+  "verification": "unverified",
+  "verification_note": "These probe identifiers were absent from the bundled HM450, EPIC, and EPICv2 manifests on 2026-09-02.",
+  "reviewed_by": []
+}
