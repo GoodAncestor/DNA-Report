@@ -706,6 +706,15 @@ def analyze(path: str, *, trait_table: str | None = None,
     except ImportError:
         pass
     _interpret_and_promote(result)
+    try:
+        from geneask.interpret.polygenic import trait_scores
+        result.trait_scores = trait_scores(result.findings)
+    except ImportError:
+        pass
+    from .action_plan import build_actions
+    from .outcomes import build_outcomes
+    result.actions = build_actions(result)
+    result.outcomes = build_outcomes(result)
     _apply_guesses(
         result,
         genome_calls=genome_context.get("calls") or [],
