@@ -62,6 +62,13 @@ class ReportResult:
     tissue: str | None = None                     # sample tissue used for clock validity
     scan_stats: dict = field(default_factory=dict)  # metrics about what was scanned
     read_first: list = field(default_factory=list)  # promoted findings, display order
+    age: float | None = None
+    sex: str | None = None
+    age_source: str | None = None
+    sex_source: str | None = None
+    trait_scores: list = field(default_factory=list)
+    outcomes: list = field(default_factory=list)
+    actions: list = field(default_factory=list)
 
 
 def _attach_sample_readings(findings: list, betas: dict):
@@ -142,6 +149,7 @@ def _reference_findings(betas: dict, tissue: str | None = None):
 
 
 def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
+                   age: float | None = None,
                    max_markers: int | None = 40, notes: list | None = None,
                    scan_stats: dict | None = None):
     """Call the MethylAsk engine -> (findings, provider_status, clocks). Import
@@ -176,7 +184,14 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
         # zero CpGs and the report silently shows no age.
         base_betas = {base_probe(k): v for k, v in sample.betas.items()}
         # clocks run on the WHOLE profile (cheap arithmetic, no network)
-        clock_results = _clocks.run_all(base_betas, tissue=tissue)
+        # MethylAsk gains the age parameter in Lane S3. Keep this commit usable
+        # with the preceding engine revision while still passing age as soon as
+        # that interface exists.
+        import inspect
+        clock_kwargs = {"tissue": tissue}
+        if "age" in inspect.signature(_clocks.run_all).parameters:
+            clock_kwargs["age"] = age
+        clock_results = _clocks.run_all(base_betas, **clock_kwargs)
 
     notes = notes if notes is not None else []
     scan_stats = scan_stats if scan_stats is not None else {}
@@ -597,7 +612,9 @@ def compare(vcf: str) -> ReportResult:
 
 def analyze(path: str, *, trait_table: str | None = None,
             reference_fasta: str | None = None,
-            tissue: str | None = None) -> ReportResult:
+            tissue: str | None = None,
+            age: float | None = None,
+            sex: str | None = None) -> ReportResult:
     """Detect, route, run engine(s), collect merged findings.
 
     reference_fasta: optional; enables CG/CHG/CHH context resolution for a modBAM
@@ -607,7 +624,15 @@ def analyze(path: str, *, trait_table: str | None = None,
     """
     kind = detect(path)
     engines = ROUTING[kind]
-    result = ReportResult(kind=kind, engines=engines, tissue=tissue)
+    result = ReportResult(
+        kind=kind,
+        engines=engines,
+        tissue=tissue,
+        age=age,
+        sex=sex,
+        age_source="user" if age is not None else None,
+        sex_source="user" if sex is not None else None,
+    )
 
     if kind == InputKind.UNKNOWN:
         result.notes.append(f"Could not determine file type for {path}; no engine routed.")
@@ -633,7 +658,7 @@ def analyze(path: str, *, trait_table: str | None = None,
         if "methylask" in engines:
             try:
                 f, st, clk = _run_methylask(
-                    work, kind, tissue=tissue, notes=result.notes,
+                    work, kind, tissue=tissue, age=age, notes=result.notes,
                     scan_stats=result.scan_stats,
                 )
                 result.findings += f

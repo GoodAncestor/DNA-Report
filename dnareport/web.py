@@ -54,7 +54,7 @@ queue backend the /enqueue path is disabled and only inline analysis runs, so th
 app degrades to a standalone analyzer.
 """
 from __future__ import annotations
-import os, re, sys, json, uuid, shutil, tempfile, contextlib, html as _html
+import os, re, sys, json, uuid, shutil, tempfile, contextlib, math, html as _html
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
@@ -598,8 +598,41 @@ def _requested_explain_backend(
     return explain_backend_for(label, requested)
 
 
+_BAD_AGE = "Age was not a number between 0 and 120 and was ignored"
+_BAD_SEX = "Sex was not female, male, or other and was ignored"
+
+
+def _person_inputs(age=None, sex=None):
+    notes = []
+    parsed_age = None
+    if age not in (None, ""):
+        try:
+            candidate = float(age)
+        except (TypeError, ValueError):
+            candidate = None
+        if candidate is None or not math.isfinite(candidate) or not 0 <= candidate <= 120:
+            notes.append(_BAD_AGE)
+        else:
+            parsed_age = candidate
+
+    parsed_sex = str(sex or "").strip().lower() or None
+    if parsed_sex not in (None, "female", "male", "other"):
+        notes.append(_BAD_SEX)
+        parsed_sex = None
+    return parsed_age, parsed_sex, notes
+
+
+def _provided_person_inputs(age=None, sex=None):
+    values = {}
+    if age not in (None, ""):
+        values["age"] = age
+    if sex not in (None, ""):
+        values["sex"] = sex
+    return values
+
+
 def _run_and_respond(local, tissue, filename="", *, want_json=False,
-                     x_api_key="", key_q=""):
+                     x_api_key="", key_q="", age=None, sex=None):
     """Shared path for uploads and demos: detect, gate heavy kinds, run, then
     return HTML (human) or JSON (agents/products, key-guarded)."""
     kind = detect(local)
@@ -635,6 +668,13 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
             header = fh.readline()
         tissue = infer_tissue(filename or os.path.basename(local), header).tissue
 
+    parsed_age, parsed_sex, person_notes = _person_inputs(age, sex)
+    analyze_kwargs = {"tissue": tissue}
+    if parsed_age is not None:
+        analyze_kwargs["age"] = parsed_age
+    if parsed_sex is not None:
+        analyze_kwargs["sex"] = parsed_sex
+
     # VCF routing: a MULTI-sample VCF is a reconcile-my-tests job (compare);
     # a SINGLE-sample VCF is interpretation (analyze -> ClinVar + traits).
     if kind == InputKind.VCF:
@@ -644,9 +684,10 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
             n = n_samples(local)
         except Exception:
             pass
-        res = compare(local) if n >= 2 else analyze(local, tissue=tissue)
+        res = compare(local) if n >= 2 else analyze(local, **analyze_kwargs)
     else:
-        res = analyze(local, tissue=tissue)
+        res = analyze(local, **analyze_kwargs)
+    res.notes.extend(person_notes)
 
     from .explain import explain_promoted
     explain_promoted(res, cache_only=True)
@@ -830,7 +871,7 @@ async def upload_sign(request: Request):
 
 def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
                  notify_email: str = "", newsletter: bool = False,
-                 explain_backend: str | None = None) -> str:
+                 explain_backend: str | None = None, age=None, sex=None) -> str:
     """Push a heavy job and return its id. Shared by /enqueue (called by the
     Cloudflare Worker) and the presigned multipart flow (where the app completes
     the upload itself and there is no Worker in the path at all)."""
@@ -838,13 +879,18 @@ def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
     if q is None:
         raise HTTPException(status_code=503, detail="no queue backend configured")
     job_id = uuid.uuid4().hex
+    parsed_age, parsed_sex, person_notes = _person_inputs(age, sex)
     job = {
         "job_id": job_id,
         "r2_key": r2_key,
         "kind": kind,
         "n_samples": n_samples,
         "explain_backend": explain_backend,
+        "age": parsed_age,
+        "sex": parsed_sex,
     }
+    if person_notes:
+        job["input_notes"] = person_notes
     email = (notify_email or "").strip()
     if email and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         job["notify_email"] = email
@@ -968,9 +1014,14 @@ async def multipart_complete(request: Request):
     if kind not in _QUEUE_KINDS:
         s3.delete_object(Bucket=R2_INCOMING_BUCKET, Key=key)
         raise HTTPException(status_code=400, detail="unknown kind")
-    job_id = _enqueue_job(key, kind, int(body.get("n_samples") or 1),
-                          str(body.get("notify_email") or ""),
-                          bool(body.get("newsletter")))
+    job_id = _enqueue_job(
+        key,
+        kind,
+        int(body.get("n_samples") or 1),
+        str(body.get("notify_email") or ""),
+        bool(body.get("newsletter")),
+        **_provided_person_inputs(body.get("age"), body.get("sex")),
+    )
     return {"job_id": job_id, "status": "queued", "r2_key": key}
 
 
@@ -999,6 +1050,7 @@ async def analyze_r2(
     body = await _json_body(request)
     key = str(body.get("key") or "")
     tissue = str(body.get("tissue") or "")
+    age, sex = body.get("age"), body.get("sex")
 
     # only keys this service minted: our prefix, and no traversal out of it
     if not key.startswith(R2_INLINE_PREFIX) or ".." in key:
@@ -1027,7 +1079,10 @@ async def analyze_r2(
     if _queue_is_usable():
         backend = _requested_explain_backend(explain, x_api_key, api_key)
         job_id = _enqueue_job(
-            key, _advisory_kind(key), explain_backend=backend
+            key,
+            _advisory_kind(key),
+            explain_backend=backend,
+            **_provided_person_inputs(age, sex),
         )
         return _queued_response(job_id)
 
@@ -1048,7 +1103,8 @@ async def analyze_r2(
                 display = os.path.basename(local)
             # off the event loop, for the same reason as /analyze above
             return await run_in_threadpool(_run_and_respond, local,
-                                           tissue or None, filename=display)
+                                           tissue or None, filename=display,
+                                           age=age, sex=sex)
     finally:
         # the object goes whether or not the analysis worked
         try:
@@ -1121,6 +1177,7 @@ def api_docs(x_api_key: str = Header(default=""), api_key: str = ""):
 @app.post("/analyze")
 async def analyze_inline(request: Request,
                          file: UploadFile = File(...), tissue: str = Form(default=""),
+                         age: str = Form(default=""), sex: str = Form(default=""),
                          notify_email: str = Form(default=""),
                          newsletter: str = Form(default=""),
                          format: str = "", accept: str = Header(default=""),
@@ -1183,7 +1240,8 @@ async def analyze_inline(request: Request,
                 # ticked too. _enqueue_job validates the address.
                 return _queued_response(_enqueue_job(
                     key, _advisory_kind(display), 1, notify_email,
-                    newsletter not in ("", "0", "false")))
+                    newsletter not in ("", "0", "false"),
+                    **_provided_person_inputs(age, sex)))
 
             # Off the event loop. Everything below _run_and_respond is
             # synchronous and can run for minutes on a large array, so calling
@@ -1194,7 +1252,7 @@ async def analyze_inline(request: Request,
             return await run_in_threadpool(
                 _run_and_respond, local, tissue or None, filename=display,
                 want_json=_wants_json(accept, format),
-                x_api_key=x_api_key, key_q=api_key)
+                x_api_key=x_api_key, key_q=api_key, age=age, sex=sex)
         except UploadError as exc:
             # name the file the user actually chose, so the refusal page can show it
             exc.filename = exc.filename if getattr(exc, "filename", "") else display
@@ -1228,6 +1286,7 @@ def enqueue(
         payload.get("notify_email") or "",
         payload.get("newsletter"),
         explain_backend=backend,
+        **_provided_person_inputs(payload.get("age"), payload.get("sex")),
     )
     return {"job_id": job_id, "status": "queued"}
 
