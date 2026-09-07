@@ -2,13 +2,29 @@
   "sample_id": "ONT-DEMO-SYNTHETIC",
   "reference_build": "GRCh38",
   "probe_map": {
+    "cg05575921": [
+      "chr5",
+      373262
+    ],
     "cg03636183": [
       "chr19",
       16889773
     ],
-    "cg05575921": [
-      "chr5",
-      373262
+    "cg06500161": [
+      "chr21",
+      42236476
+    ],
+    "cg00574958": [
+      "chr11",
+      68840153
+    ],
+    "cg17901584": [
+      "chr1",
+      54888032
+    ],
+    "cg22454769": [
+      "chr2",
+      105399309
     ],
     "cg16867657": [
       "chr6",
@@ -53,6 +69,176 @@
       "p": "2.54e-182",
       "details": "-",
       "study_id": "23691101_smoking_current_vs_never_smoking_discovery"
+    },
+    {
+      "author": "Zeilinger S",
+      "consortium": "-",
+      "pmid": "23691101",
+      "date": "2013-05-17",
+      "trait": "Smoking",
+      "efo": "EFO_0006527, EFO_0005671, EFO_0004318",
+      "analysis": "Current vs never smoking discovery",
+      "source": "Table S1",
+      "outcome": "DNA methylation",
+      "exposure": "Smoking",
+      "covariates": "Age, sex, body mass index, alcohol consumption and cell counts",
+      "outcome_units": "M values",
+      "exposure_units": "-",
+      "methylation_array": "Illumina HumanMethylation450",
+      "tissue": "Whole blood",
+      "further_details": "-",
+      "n": "1011",
+      "n_cohorts": "1",
+      "age": "60.8",
+      "sex": "Both",
+      "ethnicity": "European",
+      "cpg": "cg03636183",
+      "chrpos": "chr19:17000585",
+      "chr": "19",
+      "pos": 17000585,
+      "gene": "F2RL3",
+      "type": "North shore",
+      "beta": "-",
+      "se": "-",
+      "p": "2.42e-80",
+      "details": "-",
+      "study_id": "23691101_smoking_current_vs_never_smoking_discovery"
+    },
+    {
+      "author": "Wahl S",
+      "consortium": "-",
+      "pmid": "28002404",
+      "date": "2017-01-05",
+      "trait": "Body mass index",
+      "efo": "EFO_0004340",
+      "analysis": "Discovery and replication",
+      "source": "Table S3",
+      "outcome": "Body mass index",
+      "exposure": "DNA methylation",
+      "covariates": "Age, sex, smoking, physical activity index, alcohol consumption, cell counts and technical covariates",
+      "outcome_units": "kg/m2",
+      "exposure_units": "Beta values",
+      "methylation_array": "Illumina HumanMethylation450",
+      "tissue": "Whole blood",
+      "further_details": "Weighted Z-test meta-analysis",
+      "n": "10238",
+      "n_cohorts": "13",
+      "age": "54.5",
+      "sex": "Both",
+      "ethnicity": "European,South Asian",
+      "cpg": "cg06500161",
+      "chrpos": "chr21:43656587",
+      "chr": "21",
+      "pos": 43656587,
+      "gene": "ABCG1",
+      "type": "South shore",
+      "beta": "-",
+      "se": "-",
+      "p": "1.1e-68",
+      "details": "-",
+      "study_id": "28002404_body_mass_index_discovery_and_replication"
+    },
+    {
+      "author": "Braun KVE",
+      "consortium": "-",
+      "pmid": "28194238",
+      "date": "2016-06-16",
+      "trait": "Triglycerides",
+      "efo": "EFO_0004530, CHEBI_17855",
+      "analysis": "Discovery and replication",
+      "source": "Table S1",
+      "outcome": "DNA methylation",
+      "exposure": "Triglycerides",
+      "covariates": "Age, sex, smoking, cell counts and technical covariates",
+      "outcome_units": "Beta values",
+      "exposure_units": "mmol/l",
+      "methylation_array": "Illumina HumanMethylation450",
+      "tissue": "Whole blood",
+      "further_details": "-",
+      "n": "1485",
+      "n_cohorts": "2",
+      "age": "64",
+      "sex": "Both",
+      "ethnicity": null,
+      "cpg": "cg00574958",
+      "chrpos": "chr11:68607622",
+      "chr": "11",
+      "pos": 68607622,
+      "gene": "CPT1A",
+      "type": "North shore",
+      "beta": "-0.0139",
+      "se": "0.0013",
+      "p": "5.07e-26",
+      "details": "-",
+      "study_id": "28194238_triglycerides_discovery_and_replication"
+    },
+    {
+      "author": "Hannah M. Smith",
+      "consortium": "Generation Scotland",
+      "pmid": "39706196",
+      "date": "Jan 2, 2025",
+      "trait": "HDL cholesterol",
+      "efo": "EFO_0004612",
+      "analysis": "discovery",
+      "source": null,
+      "outcome": "DNA methylation",
+      "exposure": "HDL cholesterol",
+      "covariates": "Age,Sex,Smoking,Cell composition (reference based),Batch effects",
+      "outcome_units": "Other",
+      "exposure_units": "mmol/L",
+      "methylation_array": "Illumina HumanMethylationEPIC",
+      "tissue": "Whole blood",
+      "further_details": null,
+      "n": "18225",
+      "n_cohorts": "1",
+      "age": "Adults",
+      "sex": "Both",
+      "ethnicity": "European",
+      "cpg": "cg17901584",
+      "chrpos": "chr1:55353706",
+      "chr": "1",
+      "pos": 55353706,
+      "gene": "DHCR24",
+      "type": "South shore",
+      "beta": "1.00239",
+      "se": "0.0333759",
+      "p": "1.8270649999999998e-193",
+      "details": null,
+      "study_id": "39706196_Hannah-M.-Smith_hdl_cholesterol_discovery"
+    },
+    {
+      "author": "Battram T",
+      "consortium": "GEO",
+      "pmid": "23177740",
+      "date": "2020-09-15",
+      "trait": "Age",
+      "efo": "EFO_0000246",
+      "analysis": "EWAS Catalog re-analysis of GEO data. GEO accession ID is GSE40279",
+      "source": null,
+      "outcome": "DNA methylation",
+      "exposure": "Age",
+      "covariates": "Batch effects, cell composition (reference free)",
+      "outcome_units": "Beta Values",
+      "exposure_units": "Years",
+      "methylation_array": "Illumina HumanMethylation450",
+      "tissue": "Whole blood",
+      "further_details": null,
+      "n": "656",
+      "n_cohorts": "1",
+      "age": "Adults",
+      "sex": "Both",
+      "ethnicity": "Unclear",
+      "cpg": "cg22454769",
+      "chrpos": "chr2:106015767",
+      "chr": "2",
+      "pos": 106015767,
+      "gene": "FHL2",
+      "type": "Island",
+      "beta": "0.0039",
+      "se": "0.00019",
+      "p": "2e-70",
+      "details": null,
+      "study_id": "23177740_Battram-T_age_ewas_catalog_re-analysis_of_geo_data__geo_accession_id_is_gse40279"
     }
   ],
   "variant_findings": [
@@ -87,23 +273,98 @@
       },
       "link": "https://www.ncbi.nlm.nih.gov/clinvar/variation/421014/",
       "pmids": []
+    },
+    {
+      "marker": "16-23603449-T-A",
+      "source": "clinvar_panel_157",
+      "description": "PALB2: Conflicting classifications of pathogenicity (genotype A/T, WGS)",
+      "tier": "speculative",
+      "categories": [
+        "clinical"
+      ],
+      "detail": {
+        "gene": "PALB2",
+        "topic": "cancer",
+        "modality": "genome",
+        "clinical_significance": "Conflicting classifications of pathogenicity",
+        "review_status": "criteria provided, conflicting classifications",
+        "clinvar_variation_id": "921019",
+        "gold_stars": 1,
+        "platform": "WGS",
+        "conditions": [],
+        "condition_ids": [],
+        "molecular_consequence": null,
+        "origin": [],
+        "allele_id": null,
+        "genotype": "A/T",
+        "zygosity": "het",
+        "filter": "PASS",
+        "qual": 90.0,
+        "gq": 55,
+        "dp": 36
+      },
+      "link": "https://www.ncbi.nlm.nih.gov/clinvar/variation/921019/",
+      "pmids": []
     }
   ],
   "sources": {
     "ewas": {
       "url": "https://www.ewascatalog.org/api/?cpg=cg05575921",
       "retrieved": "2026-09-06",
-      "coordinate_note": "EWAS chrpos is original study annotation; input mapping uses explicit EPICv2 hg38 coordinates."
+      "coordinate_note": "EWAS chrpos is original study annotation; input mapping uses explicit EPICv2 hg38 coordinates.",
+      "additional_records": [
+        {
+          "probe": "cg03636183",
+          "url": "https://www.ewascatalog.org/api/?cpg=cg03636183",
+          "retrieved": "2026-09-06",
+          "response_sha256": "1d1f7befd5a91895f4b522bdaaa5aaa98035ed1b766dd757035cd27b2fa0809a",
+          "selected_study_id": "23691101_smoking_current_vs_never_smoking_discovery"
+        },
+        {
+          "probe": "cg06500161",
+          "url": "https://www.ewascatalog.org/api/?cpg=cg06500161",
+          "retrieved": "2026-09-06",
+          "response_sha256": "4e7aa2038d196a28bc570de52262dd25d437031a7db01a6d913a899eeea96cfe",
+          "selected_study_id": "28002404_body_mass_index_discovery_and_replication"
+        },
+        {
+          "probe": "cg00574958",
+          "url": "https://www.ewascatalog.org/api/?cpg=cg00574958",
+          "retrieved": "2026-09-06",
+          "response_sha256": "8cb6d988a9ffb02d449c12763bd3ebf3c662652a6859bbcfa632c08f0318fa0b",
+          "selected_study_id": "28194238_triglycerides_discovery_and_replication"
+        },
+        {
+          "probe": "cg17901584",
+          "url": "https://www.ewascatalog.org/api/?cpg=cg17901584",
+          "retrieved": "2026-09-06",
+          "response_sha256": "47e8aa0a5ccebbf2478ffc0a21fb954ad2126bd248b4018537c4df55536885bb",
+          "selected_study_id": "39706196_Hannah-M.-Smith_hdl_cholesterol_discovery"
+        },
+        {
+          "probe": "cg22454769",
+          "url": "https://www.ewascatalog.org/api/?cpg=cg22454769",
+          "retrieved": "2026-09-06",
+          "response_sha256": "7ba305c3f6eedf45bfae34363662595c99448942e5d1d5bf5582276678fb84ee",
+          "selected_study_id": "23177740_Battram-T_age_ewas_catalog_re-analysis_of_geo_data__geo_accession_id_is_gse40279"
+        }
+      ]
     },
     "clinvar": {
       "record_url": "https://www.ncbi.nlm.nih.gov/clinvar/variation/421014/",
       "source_file": "GeneAsk/geneask/data/reference/clinvar_panel_157genes.json.gz",
       "source_sha256": "4943ace4b1b15e8622566f4f0bb88659f3aabb0fc3315fa108c332e4eb0e5117",
-      "snapshot_date": "2026-09-06"
+      "snapshot_date": "2026-09-06",
+      "record_urls": [
+        "https://www.ncbi.nlm.nih.gov/clinvar/variation/421014/",
+        "https://www.ncbi.nlm.nih.gov/clinvar/variation/921019/"
+      ],
+      "panel_release": "2026-06-06"
     },
     "probe_map": {
       "source": "MethylAsk/methylask/data/reference/manifests/EPICv2.hg38.manifest.tsv.gz",
-      "coordinates": "0-based forward CpG start; four selected probes only"
+      "coordinates": "0-based forward CpG start; eight selected probes only",
+      "source_sha256": "85f52e02fbc13505ca62aaab7d7c13a73a9f8df13dfbdf988d335a81df3ad955"
     }
   }
 }

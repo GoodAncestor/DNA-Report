@@ -37,7 +37,11 @@ def test_demo_parses_both_streams_and_distinguishes_zero_missing_and_low_depth(n
     meta = result.scan_stats['nanopore']
     assert meta['sample_id'] == 'ONT-DEMO-SYNTHETIC'
     assert meta['demo']['synthetic'] is True
-    assert meta['methylation']['mapped_probes'] == 2
+    assert meta['methylation']['mapped_probes'] == 6
+    assert meta['methylation']['total_probes'] == 8
+    assert len(result.findings) == 8
+    assert sum(f.detail['modality'] == 'methylome' for f in result.findings) == 6
+    assert sum(f.detail['modality'] == 'genome' for f in result.findings) == 2
     assert meta['methylation']['missing_probes'] == 1
     assert meta['methylation']['low_coverage_probes'] == 1
     rows = {r['probe']: r for r in meta['demo_measurements']}
@@ -45,12 +49,18 @@ def test_demo_parses_both_streams_and_distinguishes_zero_missing_and_low_depth(n
     assert rows['cg03636183']['valid_reads'] == 10
     assert rows['cg16867657']['fraction'] is None and rows['cg16867657']['valid_reads'] == 2
     assert rows['cg19693031']['fraction'] is None and rows['cg19693031']['valid_reads'] is None
-    methyl = next(f for f in result.findings if f.detail['modality'] == 'methylome')
+    methyl = next(f for f in result.findings if f.marker == 'cg05575921')
     assert methyl.detail['your reading'] == .65  # 13/20, not 13/18
     assert methyl.pmids == ['23691101']
-    variant = next(f for f in result.findings if f.detail['modality'] == 'genome')
+    variant = next(f for f in result.findings if f.marker == '13-32316419-CAG-C')
     assert variant.detail['dp'] == 32 and variant.detail['gq'] == 60
     assert variant.link.endswith('/421014/')
+    conflicting = next(f for f in result.findings if f.marker == '16-23603449-T-A')
+    assert conflicting.detail['clinical_significance'] == 'Conflicting classifications of pathogenicity'
+    assert conflicting.tier.value == 'speculative'
+    assert conflicting.link.endswith('/921019/')
+    assert {f.tier.value for f in result.findings} == {'robust', 'moderate', 'speculative'}
+    assert len({f.marker for f in result.findings}) == 8  # no duplicated associations to inflate the count
     assert not result.scan_stats['live_apis_called']
     assert 'diplotypes are withheld' in ' '.join(result.notes)
     for f in result.findings:
@@ -90,3 +100,15 @@ def test_public_routes_exports_fixtures_and_landing(no_external_work, monkeypatc
     assert 'href="/demo/nanopore"' in landing and 'SPECIMEN 05 · SYNTHETIC' in landing
     assert 'All four are real' not in landing
     assert 'nanopore' in client.get('/health').json()['demos']
+
+
+def test_frozen_probe_coordinates_match_bundled_grch38_manifest():
+    from dnareport.nanopore_demo import DATA
+    from methylask.ingest.nanopore import _probe_map
+    snapshot = json.loads((DATA / 'nanopore_synthetic.json').read_text())
+    manifest, *_ = _probe_map('EPICv2', None)
+    for probe, position in snapshot['probe_map'].items():
+        assert probe in manifest[tuple(position)]
+    assert {row['cpg'] for row in snapshot['ewas_rows']} == {
+        'cg05575921', 'cg03636183', 'cg06500161', 'cg00574958', 'cg17901584', 'cg22454769'}
+    assert len(snapshot['ewas_rows']) == 6
