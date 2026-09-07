@@ -341,10 +341,14 @@ def reference_labels(text):
     """Reference-only presentation substitutions; schema reading keys stay stable."""
     for before, after in (
         ('your reading', 'HG002 reading'),
+        ('you carry it', 'HG002 carries it'),
+        ('your file', 'the reference dataset'),
         ('your position', 'the reference sample position'),
         ('not your tissue', 'study tissue differs'),
     ):
         text = text.replace(before, after)
+    if "</head>" in text and 'id="hg002-layout"' not in text:
+        text = text.replace("</head>", '<style id="hg002-layout">.chip{white-space:normal;overflow-wrap:anywhere;max-width:100%;min-width:0}</style></head>', 1)
     return text
 
 
