@@ -190,6 +190,27 @@ async function fetch(url,options){
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node unavailable")
+def test_browser_inline_formdata_uses_shared_metadata():
+    page_js = "\n".join(re.findall(r"<script>(.*?)</script>", LANDING_HTML, re.S))
+    form_code = re.search(r"const fd=new FormData\(\);.*?(?=\s*// Opt-ins)", page_js, re.S)
+    assert form_code
+    program = """
+const elements={sample_id:{value:'sample-01'},reference_build:{value:'GRCh38'},
+ min_coverage:{value:'12'},combined_strands:{checked:false}};
+const document={getElementById:key=>elements[key]};
+const tissue={value:'saliva'},ageIn={value:'42'},sexIn={value:'female'},ontControls={hidden:false};
+const payload=new Blob(['synthetic']);
+""" + _js_functions("uploadMetadata") + "\n" + form_code.group(0) + """
+console.log(JSON.stringify(Object.fromEntries([...fd.entries()].filter(([key])=>key!=='file'))));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "sample_id": "sample-01", "reference_build": "GRCh38", "min_coverage": "12",
+        "combined_strands": "false", "tissue": "saliva", "age": "42", "sex": "female"}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node unavailable")
 def test_browser_recognizes_real_modkit_rows_and_rejects_truncated_rows():
     cases = [{"name": "calls.bed", "text": BED},
              {"name": "calls.bed", "text": BED.replace("\t", " ")},

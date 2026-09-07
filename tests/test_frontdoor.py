@@ -187,7 +187,8 @@ def test_landing_asks_for_age_and_sex_optionally_and_posts_them():
     from dnareport.landing import LANDING_HTML
     assert 'id="age"' in LANDING_HTML and 'id="sex"' in LANDING_HTML
     assert "We estimate it from your file" in LANDING_HTML
-    assert "fd.append('age',ageIn.value)" in LANDING_HTML
+    assert "Object.entries(uploadMetadata())" in LANDING_HTML
+    assert "fd.append(key,String(value))" in LANDING_HTML
     assert "age:ageIn.value||''" in LANDING_HTML and "sex:sexIn.value||''" in LANDING_HTML
 
 
