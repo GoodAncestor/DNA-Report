@@ -348,7 +348,7 @@ def reference_labels(text):
     ):
         text = text.replace(before, after)
     if "</head>" in text and 'id="hg002-layout"' not in text:
-        text = text.replace("</head>", '<style id="hg002-layout">.chip{white-space:normal;overflow-wrap:anywhere;max-width:100%;min-width:0}</style></head>', 1)
+        text = text.replace("</head>", '<style id="hg002-layout">body{overflow-wrap:anywhere}.chip{white-space:normal;overflow-wrap:anywhere;max-width:100%;min-width:0}</style></head>', 1)
     return text
 
 
