@@ -196,6 +196,10 @@ def _bam_info(path: str, requested_sample: str | None = None) -> dict:
         with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
             header = bam.header.to_dict()
             groups = {g["ID"]: g for g in header.get("RG", [])}
+            # Validate declared platforms even when a read omits RG and the
+            # sole header group is inferred. Such reads must not bypass PL.
+            if any(g.get("PL", "ONT").upper() not in {"ONT", "OXFORD_NANOPORE"} for g in groups.values()):
+                raise NanoporeError("BAM read groups identify a non-Nanopore sequencing platform.")
             samples = {g["SM"] for g in groups.values() if g.get("SM")}
             if samples and any(not group.get("SM") for group in groups.values()):
                 raise NanoporeError("Some BAM read groups lack sample IDs; supply a consistently labelled single-sample BAM.")
@@ -218,8 +222,6 @@ def _bam_info(path: str, requested_sample: str | None = None) -> dict:
                     group = groups.get(read.get_tag("RG"))
                     if group is None:
                         raise NanoporeError("A read refers to an unknown read group.")
-                    if group.get("PL", "ONT").upper() not in {"ONT", "OXFORD_NANOPORE"}:
-                        raise NanoporeError("BAM read groups identify a non-Nanopore sequencing platform.")
                 elif len(groups) > 1:
                     raise NanoporeError("Reads without read groups cannot be assigned across multiple groups.")
                 has_mm = read.has_tag("MM") or read.has_tag("Mm")

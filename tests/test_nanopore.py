@@ -347,3 +347,18 @@ def test_old_modkit_fails_before_expensive_calling(fixture, stub_tools, monkeypa
         with n.prepare_nanopore(str(bam), config=config):
             pass
     assert not any(stage == "Clair3 variant calling" for stage, _ in stub_tools)
+
+
+@pytest.mark.parametrize("omit_read_group", [False, True])
+def test_declared_non_ont_platform_cannot_bypass_validation(fixture, omit_read_group):
+    bam, _ = fixture
+    def platform(header):
+        header["RG"][0]["PL"] = "ILLUMINA"
+        return header
+    def read_group(read):
+        if omit_read_group:
+            read.set_tag("RG", None)
+        return read
+    rewrite_bam(bam, transform_header=platform, transform_read=read_group)
+    with pytest.raises(n.NanoporeError, match="non-Nanopore sequencing platform"):
+        n._bam_info(str(bam))
