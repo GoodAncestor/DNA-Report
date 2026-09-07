@@ -44,8 +44,8 @@ def local_references(tmp_path, monkeypatch):
     monkeypatch.setattr(pharmcat, "available", lambda: True)
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", forbidden)
-    import requests
-    monkeypatch.setattr(requests.sessions.Session, "request", forbidden)
+    import socket
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
     yield probes
     assert not attempted, "Native processing attempted an array prediction, personalized PGx or network call"
 
