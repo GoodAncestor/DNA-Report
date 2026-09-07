@@ -45,15 +45,16 @@ def summary_html(result):
     demo = result.scan_stats["nanopore"].get("demo", {})
     introduction = ""
     if demo.get("synthetic"):
-        introduction = ("<aside style='padding:16px;background:#fff4dc;border:1px solid #b98b36;border-radius:6px'>"
+        introduction = ("<aside class='synthetic-demo-notice' style='padding:16px;color:var(--ink,#1b1c18);background:var(--accent-soft,#e6efe9);border:1px solid var(--accent,#2b6a5b);border-radius:6px'>"
                         "<strong>Synthetic Nanopore demo</strong><p>" + html.escape(demo["description"]) + "</p>"
+                        + ("<p>" + html.escape(demo["finding_scope"]) + "</p>" if demo.get("finding_scope") else "") +
                         "<p>Download: <a href='/demo/nanopore?format=json'>report JSON</a> · "
                         "<a href='/demo/nanopore?format=markdown'>report Markdown</a> · "
                         "<a href='/demo/nanopore/files/calls.vcf'>VCF</a> · "
                         "<a href='/demo/nanopore/files/calls.bedmethyl'>bedMethyl</a> · "
                         "<a href='/demo/nanopore/files/README.md'>fixture guide</a></p></aside>")
         measurements = result.scan_stats["nanopore"].get("demo_measurements", [])
-        introduction += "<p>Four selected CpG probes; these counts do not describe a whole genome.</p><ul>"
+        introduction += "<p>" + html.escape(demo.get("probe_scope", "Selected CpG probes; these counts do not describe a whole genome.")) + "</p><ul>"
         for row in measurements:
             reading = f"{row['fraction']:.2f} from {row['valid_reads']} valid reads" if row['fraction'] is not None else row['status']
             if row['fraction'] is None and row['valid_reads'] is not None:
@@ -78,7 +79,7 @@ def summary_markdown(result):
     lines = ["## Native sequencing measurements", "", "| Measurement | Value |", "| --- | --- |"]
     demo = result.scan_stats["nanopore"].get("demo", {})
     if demo.get("synthetic"):
-        lines = ["## Synthetic Nanopore demo", "", demo["description"], "", demo["probe_scope"], ""] + lines
+        lines = ["## Synthetic Nanopore demo", "", demo["description"], "", demo.get("finding_scope", ""), "", demo["probe_scope"], ""] + lines
     lines += [f"| {safe(key)} | {safe(value)} |" for key, value in rows]
     lines += ["", "The sample label links these outputs; a label alone does not verify biological identity.", "", CAUTIONS, "",
               "Coverage, thresholds, hashes and tool versions are retained in the JSON export.", ""]
