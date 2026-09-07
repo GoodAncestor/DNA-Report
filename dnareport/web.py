@@ -123,6 +123,16 @@ R2_QUEUED_PREFIX = "incoming/"
 # DNAREPORT_ALWAYS_QUEUE=0 to put every upload back on the old path — the queued
 # route is new in production and this is how it gets reverted without a deploy.
 ALWAYS_QUEUE = os.environ.get("DNAREPORT_ALWAYS_QUEUE", "1") not in ("0", "", "false")
+ONT_UPLOADS_ENABLED = os.environ.get("DNAREPORT_ONT_UPLOADS_ENABLED", "0").lower() in ("1", "true")
+
+
+def _require_native_worker(kind):
+    if isinstance(kind, str) and kind in {"modbam", "pod5"} and not ONT_UPLOADS_ENABLED:
+        raise UploadError(
+            "nanopore_worker_unavailable", "Raw Nanopore uploads are not enabled yet",
+            "This site is awaiting a configured sequencing worker. No sequencing job was queued.",
+            hint="Open /demo/nanopore to try the synthetic report. Prepared bedMethyl and VCF files can use the ordinary upload.",
+            status=503)
 
 # R2 requires >= 5 MB for every part except the last. 16 MB matches what the
 # Worker-proxied flow used, so a browser's memory profile per part is unchanged.
@@ -632,9 +642,10 @@ def _provided_person_inputs(age=None, sex=None):
 
 
 def _upload_metadata(*, kind=None, tissue=None, age=None, sex=None,
-                     sample_id=None, reference_build=None, min_coverage=None,
-                     combined_strands=None):
+                    sample_id=None, reference_build=None, min_coverage=None,
+                    combined_strands=None):
     """Validate public metadata; server-owned paths/models are never accepted."""
+    _require_native_worker(kind)
     values = _provided_person_inputs(age, sex)
     if tissue not in (None, ""):
         if tissue not in ("blood", "saliva", "buccal", "other"):
@@ -779,7 +790,7 @@ def _cached_demo_html(key: str, build) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def landing():
-    return HTMLResponse(LANDING_HTML)
+    return HTMLResponse(LANDING_HTML.replace("__ONT_ENABLED__", "true" if ONT_UPLOADS_ENABLED else "false"))
 
 
 @app.get("/disclaimer", response_class=PlainTextResponse)
@@ -840,6 +851,32 @@ def demo_combined(format: str = "", accept: str = Header(default=""),
     return HTMLResponse(_cached_demo_html("combined", _render))
 
 
+@app.get("/demo/nanopore/files/{name}")
+def nanopore_demo_file(name: str):
+    from .nanopore_demo import DATA, DOWNLOADS
+    if name not in DOWNLOADS:
+        raise HTTPException(404, "Unknown demo fixture")
+    filename, media = DOWNLOADS[name]
+    return Response((DATA / filename).read_bytes(), media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/demo/nanopore")
+def demo_nanopore(format: str = "", accept: str = Header(default="")):
+    """Public synthetic exports; uploaded data keeps its existing access controls."""
+    from .nanopore_demo import build_demo
+    if format not in ("", "html", "json", "markdown", "md"):
+        raise HTTPException(400, "Use html, json or markdown")
+    if format in ("markdown", "md"):
+        return PlainTextResponse(compose_result_views(build_demo(), filename="Synthetic Nanopore demo")["markdown"],
+                                 media_type="text/markdown",
+                                 headers={"Content-Disposition": 'attachment; filename="nanopore-demo.md"'})
+    if _wants_json(accept, format):
+        return JSONResponse(compose_result_views(build_demo())["json"])
+    return HTMLResponse(_cached_demo_html("nanopore", lambda: report_html(
+        build_demo(), filename="Synthetic Nanopore demo")))
+
+
 @app.get("/demo/{kind}")
 def demo(kind: str, format: str = "", accept: str = Header(default=""),
          x_api_key: str = Header(default=""), api_key: str = ""):
@@ -883,6 +920,7 @@ async def upload_sign(request: Request):
     _rate_limit(_client_key(request))
     body = await _json_body(request)
     filename = str(body.get("filename") or "upload")
+    _require_native_worker(_advisory_kind(filename))
     try:
         size = int(body.get("size") or 0)
     except (TypeError, ValueError):
@@ -933,6 +971,7 @@ def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
     file_kind = _advisory_kind(r2_key)
     if file_kind in {"modbam", "pod5"}:
         kind = file_kind
+    _require_native_worker(kind)
     metadata = _upload_metadata(kind=kind, tissue=tissue, sample_id=sample_id,
                                 reference_build=reference_build, min_coverage=min_coverage,
                                 combined_strands=combined_strands)
@@ -1023,6 +1062,7 @@ async def multipart_sign(request: Request):
     body = await _json_body(request)
     key, upload_id = str(body.get("key") or ""), str(body.get("uploadId") or "")
     _require_own_key(key)
+    _require_native_worker(_advisory_kind(key))
     parts = body.get("parts") or []
     if not isinstance(parts, list) or not parts or len(parts) > 100:
         raise HTTPException(status_code=400, detail="parts must be 1-100 numbers")
@@ -1055,6 +1095,7 @@ async def multipart_complete(request: Request):
     metadata = _body_metadata(body, kind=kind)
     key, upload_id = str(body.get("key") or ""), str(body.get("uploadId") or "")
     _require_own_key(key)
+    _require_native_worker(_advisory_kind(key))
     parts = body.get("parts") or []
     if not isinstance(parts, list) or not parts:
         raise HTTPException(status_code=400, detail="no parts")
@@ -1189,7 +1230,8 @@ def health():
     grepping a rendered report for markers."""
     return {"status": "ok", "version": __version__, "commit": BUILD_COMMIT,
             "built": BUILD_TIME, "queue": queue_enabled(),
-            "json_api": bool(API_KEYS), "demos": sorted(list(_DEMOS) + ["combined"])}
+            "json_api": bool(API_KEYS), "demos": sorted(list(_DEMOS) + ["combined", "nanopore"]),
+            "native_uploads_enabled": ONT_UPLOADS_ENABLED}
 
 
 @app.get("/metrics")
@@ -1268,6 +1310,7 @@ async def analyze_inline(request: Request,
     # already spent the resource the guard exists to protect.
     with _inflight:
         display = os.path.basename(file.filename or "upload")
+        _require_native_worker(_advisory_kind(display))
         scratch = tempfile.mkdtemp(prefix="dnr-web-")
         # The scratch dir holds the caller's raw genotype data and MUST NOT outlive
         # the request. Every report and refusal page this service prints says the

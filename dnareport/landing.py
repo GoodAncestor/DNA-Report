@@ -328,7 +328,7 @@ _LANDING_TEMPLATE = """<!doctype html>
  </div>
 
  <section class="demos">
-   <p class="rule">No file? Open a real sample</p>
+   <p class="rule">No file? Explore a sample report</p>
    <div class="specimens">
      <a class="specimen demo-link" href="/demo/blood">
        <div class="no">SPECIMEN 01</div>
@@ -349,10 +349,19 @@ _LANDING_TEMPLATE = """<!doctype html>
        <div class="t">Genome, unsettled variants</div>
        <div class="d">Variants whose ClinVar submitters disagree. Shows the AlphaGenome
          regulatory prediction and the Predictions filter.</div></a>
+     <a class="specimen demo-link" href="/demo/nanopore">
+       <div class="no">SPECIMEN 05 · SYNTHETIC</div>
+       <div class="t">Nanopore genome + methylome</div>
+       <div class="d">One fictional sample, linked variants and native CpG fractions.
+         Explore coverage, missing measurements and downloadable test inputs.</div></a>
    </div>
-   <p class="hint">All four are real public profiles. The buccal one is included on
-     purpose: it shows the report marking clocks that are not valid for a given sample
-     type, instead of printing a confident but misleading number.</p>
+   <p class="hint">Blood and buccal use public methylation profiles. Genome examples
+     illustrate variant reporting; the combined example joins separate inputs.
+     The Nanopore demo uses synthetic measurements and frozen public evidence.
+     It tests the report, not sequencing accuracy.</p>
+   <p class="hint" id="ont-worker-note">Raw Nanopore uploads are awaiting a configured
+     sequencing worker. The synthetic demo is available now; prepared bedMethyl and
+     VCF files use the ordinary upload.</p>
  </section>
 
  <footer>
@@ -382,6 +391,8 @@ _LANDING_TEMPLATE = """<!doctype html>
 <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
 
 <script>
+ const ONT_UPLOADS_ENABLED=__ONT_ENABLED__;
+ document.getElementById('ont-worker-note').hidden=ONT_UPLOADS_ENABLED;
  // ---- recognise the chosen file client-side ---------------------------
  // Cosmetic only: it mirrors the labels dnareport.detect produces so the user
  // gets an instant "yes, I know what this is" before uploading. The server
@@ -972,6 +983,12 @@ _LANDING_TEMPLATE = """<!doctype html>
 
  go.onclick=async()=>{
    if(!chosen)return;
+   if(!ONT_UPLOADS_ENABLED&&['modbam','pod5'].includes(heavyKind(chosen.name))){
+     showFail({code:'nanopore_worker_unavailable',title:'Raw Nanopore uploads are not enabled yet',
+       message:'This site is awaiting a configured sequencing worker.',
+       hint:'Open the Nanopore demo below to explore the report and download test inputs.'});
+     return;
+   }
    if(!ontControls.hidden){
      for(const input of ontControls.querySelectorAll('input,select')){
        if(!input.reportValidity())return;

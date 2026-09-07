@@ -22,6 +22,18 @@ how a native run becomes one genome/methylation report. This path requires local
 installed tools, compatible models, a pinned GRCh38 reference, and private scratch
 storage. It never downloads sequencing models during analysis.
 
+Open `/demo/nanopore` for a deterministic synthetic example of linked variants and
+native CpG measurements, with coverage, missingness and provenance. Its public
+JSON/Markdown exports and tiny inputs need no API key. The [fixture guide](dnareport/demo_data/nanopore_README.md)
+distinguishes invented measurements from frozen public evidence. No sequencer,
+calling model, remote lookup or personal data is involved in opening the demo.
+
+Raw BAM/POD5 web uploads default to disabled. Set `DNAREPORT_ONT_UPLOADS_ENABLED=1`
+only after a configured sequencing worker consumes `dnareport:jobs:ont`; the
+`/health` response reports `native_uploads_enabled`. The flag controls the hosted
+upload routes, not CLI analysis or the demo. Prepared bedMethyl and VCF remain on
+the ordinary queue. This prevents raw data uploads from waiting in an unattended queue.
+
 The [OpenLab preparation protocol](https://github.com/GoodAncestor/open-dna-lab/pull/1)
 includes sample records and a review register for practical equipment adaptations.
 

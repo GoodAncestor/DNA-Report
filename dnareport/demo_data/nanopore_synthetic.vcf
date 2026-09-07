@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##reference=GRCh38
+##source=DNA-Report-synthetic-Nanopore-demo-not-sequencer-output
+##contig=<ID=13,length=114364328>
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Synthetic read depth">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Synthetic genotype quality">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	ONT-DEMO-SYNTHETIC
+13	32316419	.	CAG	C	100	PASS	.	GT:DP:GQ	0/1:32:60

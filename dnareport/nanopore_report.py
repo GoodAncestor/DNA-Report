@@ -15,12 +15,17 @@ PLATFORM_NOTE = (
 )
 
 
-def _annotate_native(path, result, sample):
-    from .orchestrate import _run_methylask
-    findings, statuses, _clocks = _run_methylask(
-        path, InputKind.BEDMETHYL, tissue=result.tissue, age=result.age,
-        max_markers=None, notes=result.notes, nanopore_sample=sample,
-    )
+def _annotate_native(path, result, sample, *, annotations=None):
+    # Frozen reference annotations let bundled demonstrations exercise the same
+    # measurement/interpretation path without querying a deployment's databases.
+    if annotations is None:
+        from .orchestrate import _run_methylask
+        findings, statuses, _clocks = _run_methylask(
+            path, InputKind.BEDMETHYL, tissue=result.tissue, age=result.age,
+            max_markers=None, notes=result.notes, nanopore_sample=sample,
+        )
+    else:
+        findings, statuses = annotations
     from methylask.aggregate import aggregate_by_trait
     findings = aggregate_by_trait(findings, result.tissue)
     for finding in findings:

@@ -19,6 +19,7 @@ BED = "1\t10\t11\tm\t5\t.\t10\t11\t0,0,0\t5\t40\t2\t2\t1\t0\t0\t0\t0\n"
 
 @pytest.fixture
 def transport(monkeypatch):
+    monkeypatch.setattr(web, "ONT_UPLOADS_ENABLED", True)
     jobs, stored = [], []
     class Queue:
         def rpush(self, name, payload):
@@ -243,3 +244,27 @@ sniffHead(file).then(text=>console.log(JSON.stringify({starts:text.startsWith(pr
     output = json.loads(result.stdout)
     assert output["starts"] and output["bounded"]
     assert output["compressedSize"] > 262144
+
+
+@pytest.mark.parametrize('extension', ['bam', 'modbam', 'pod5'])
+def test_raw_upload_disabled_before_storage_or_queue(transport, monkeypatch, extension):
+    client, jobs, stored = transport
+    monkeypatch.setattr(web, 'ONT_UPLOADS_ENABLED', False)
+    payload = {'filename': 'sample.' + extension, 'size': 100, **META}
+    key = web.R2_QUEUED_PREFIX + 'fixture/sample.' + extension
+    requests = [
+        ('/upload/sign', payload),
+        ('/upload/multipart/create', payload),
+        ('/upload/multipart/sign', {'key': key, 'uploadId': 'fixture', 'parts': [1]}),
+        ('/upload/multipart/complete', {'key': key, 'uploadId': 'fixture', 'parts': [{'partNumber': 1, 'etag': 'x'}], 'kind': 'modbam', **META}),
+        ('/analyze/r2', {'key': web.R2_INLINE_PREFIX + 'fixture/sample.' + extension, **META}),
+    ]
+    for route, body in requests:
+        response = client.post(route, json=body)
+        assert response.status_code == 503, (route, response.text)
+        assert '/demo/nanopore' in response.text
+    response = client.post('/analyze', files={'file': ('sample.' + extension, b'fixture')}, data=META)
+    assert response.status_code == 503
+    assert jobs == stored == []
+    assert client.get('/health').json()['native_uploads_enabled'] is False
+    assert 'const ONT_UPLOADS_ENABLED=false;' in client.get('/').text
