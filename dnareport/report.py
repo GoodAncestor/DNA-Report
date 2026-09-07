@@ -36,6 +36,7 @@ KIND_LABEL = {
     InputKind.BETA_MATRIX: "Methylation beta-value table",
     InputKind.IDAT: "Illumina IDAT array file",
     InputKind.MODBAM: "ONT modBAM",
+    InputKind.POD5: "Oxford Nanopore raw signal (POD5)",
     InputKind.UNKNOWN: "Unrecognised",
 }
 
@@ -179,6 +180,19 @@ def _render_findings(result, out_path: str) -> str:
     from .glossary import glossary_html
     _append(glossary_html(rest))
 
+    from .sequencing_summary import summary_html
+    sequencing = summary_html(result)
+    if sequencing:
+        import re
+        # Keep the product title first and the measurement context before results.
+        anchor = "<section class='scan'>"
+        if anchor in body:
+            body = body.replace(anchor, sequencing + anchor, 1)
+        else:
+            body = body.replace("</h1>", "</h1>" + sequencing, 1)
+        body = re.sub(r"<p class='scan-privacy'>.*?</p>",
+                      "<p class='scan-privacy'>Local source files remain on your machine. Uploaded files follow the service deletion policy.</p>",
+                      body, count=1, flags=re.S)
     top = highlights_html(result)
     if top:
         # inject the highlights section at the top of the document body
@@ -228,7 +242,7 @@ def render_report(result, out_path: str, *, filename: str = "",
     the user's claim link refreshing for ever against an object that was never
     uploaded.
     """
-    if not result.findings and not result.clocks:
+    if not result.findings and not result.clocks and not result.scan_stats.get("nanopore"):
         from . import pages
         label = kind_label or KIND_LABEL.get(result.kind,
                                              getattr(result.kind, "value", "Unrecognised"))

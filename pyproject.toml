@@ -8,14 +8,14 @@ license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     # All three are private GoodAncestor repos (not on PyPI); git-source specs so a clean
     # install resolves from GitHub. Private-repo access uses git credentials (see README "Install").
-    "biocore[variants] @ git+https://github.com/GoodAncestor/bio-core.git",
-    "methylask @ git+https://github.com/GoodAncestor/MethylAsk.git",
+    "biocore[variants] @ git+https://github.com/GoodAncestor/bio-core.git@956e84830f542441a25e2c88255ad68f576fde57",
+    "methylask @ git+https://github.com/GoodAncestor/MethylAsk.git@0f584f63d90419e19b75e91cfe2cd733d35054f1",
     # [alphagenome] pulls the DeepMind client the regulatory-VEP annotator needs.
     # It is an extra in GeneAsk because the CLI does not need it, but this app
     # DOES: without it score_variant's ImportError is swallowed by the same
     # catch-all that stops one bad variant failing a report, so the feature would
     # sit switched on and silently score nothing.
-    "geneask[alphagenome] @ git+https://github.com/GoodAncestor/GeneAsk.git",
+    "geneask[alphagenome] @ git+https://github.com/GoodAncestor/GeneAsk.git@c856903433207cad884ccfce7be866cceebb4423",
 ]
 
 [project.scripts]
@@ -48,4 +48,4 @@ build-backend = "setuptools.build_meta"
 include = ["dnareport*"]
 
 [tool.setuptools.package-data]
-"dnareport" = ["demo_data/*.csv", "demo_data/*.vcf", "docs/*.md", "data/*.json"]
+"dnareport" = ["demo_data/*.csv", "demo_data/*.vcf", "demo_data/*.bedmethyl", "demo_data/*.json", "demo_data/*.md", "docs/*.md", "data/*.json"]

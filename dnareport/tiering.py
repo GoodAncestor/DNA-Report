@@ -18,9 +18,10 @@ does not carry:
 
 HEAVY (queued):
   IDAT                      -> methylprep normalization (raw array -> betas)
-  MODBAM                    -> whole-methylome MM/ML pileup
+  MODBAM / POD5             -> same-sample variants and native methylation
+  BEDMETHYL                 -> full-profile coordinate mapping and local annotation
   VCF with n_samples >= 2   -> bcftools merge/consensus before compare
-  BETA_MATRIX / BEDMETHYL   -> only when annotated uncapped over a large marker set
+  BETA_MATRIX               -> only when annotated uncapped over a large marker set
 
 LIGHT (inline): everything else -- single-VCF lookups, 23andMe genotype lookups,
 capped/small array annotation, epigenetic clocks, compare on an already-merged
@@ -46,13 +47,13 @@ def job_tier(kind: InputKind, *, n_samples: int = 1,
     # raw ingestion that must be normalized/piled-up first: always heavy
     if kind == InputKind.IDAT:
         return QUEUED
-    if kind == InputKind.MODBAM:
+    if kind in (InputKind.MODBAM, InputKind.POD5, InputKind.BEDMETHYL):
         return QUEUED
     # several raw per-sample VCFs -> merge/consensus is heavy; one VCF is a lookup
     if kind == InputKind.VCF:
         return QUEUED if n_samples >= 2 else INLINE
     # array annotation: heavy only when a large marker set is annotated uncapped
-    if kind in (InputKind.BETA_MATRIX, InputKind.BEDMETHYL):
+    if kind == InputKind.BETA_MATRIX:
         if max_markers is not None:          # caller capped it -> inline
             return INLINE
         if n_markers is not None and n_markers > LARGE_MARKER_SET:

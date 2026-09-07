@@ -1,0 +1,109 @@
+{
+  "sample_id": "ONT-DEMO-SYNTHETIC",
+  "reference_build": "GRCh38",
+  "probe_map": {
+    "cg03636183": [
+      "chr19",
+      16889773
+    ],
+    "cg05575921": [
+      "chr5",
+      373262
+    ],
+    "cg16867657": [
+      "chr6",
+      11044643
+    ],
+    "cg19693031": [
+      "chr1",
+      145993515
+    ]
+  },
+  "ewas_rows": [
+    {
+      "author": "Zeilinger S",
+      "consortium": "-",
+      "pmid": "23691101",
+      "date": "2013-05-17",
+      "trait": "Smoking",
+      "efo": "EFO_0006527, EFO_0005671, EFO_0004318",
+      "analysis": "Current vs never smoking discovery",
+      "source": "Table S1",
+      "outcome": "DNA methylation",
+      "exposure": "Smoking",
+      "covariates": "Age, sex, body mass index, alcohol consumption and cell counts",
+      "outcome_units": "M values",
+      "exposure_units": "-",
+      "methylation_array": "Illumina HumanMethylation450",
+      "tissue": "Whole blood",
+      "further_details": "-",
+      "n": "1011",
+      "n_cohorts": "1",
+      "age": "60.8",
+      "sex": "Both",
+      "ethnicity": "European",
+      "cpg": "cg05575921",
+      "chrpos": "chr5:373378",
+      "chr": "5",
+      "pos": 373378,
+      "gene": "AHRR",
+      "type": "North shore",
+      "beta": "-",
+      "se": "-",
+      "p": "2.54e-182",
+      "details": "-",
+      "study_id": "23691101_smoking_current_vs_never_smoking_discovery"
+    }
+  ],
+  "variant_findings": [
+    {
+      "marker": "13-32316419-CAG-C",
+      "source": "clinvar_panel_157",
+      "description": "BRCA2: Likely pathogenic (genotype C/CAG, WGS)",
+      "tier": "robust",
+      "categories": [
+        "clinical"
+      ],
+      "detail": {
+        "gene": "BRCA2",
+        "topic": "cancer",
+        "modality": "genome",
+        "clinical_significance": "Likely pathogenic",
+        "review_status": "criteria provided, multiple submitters, no conflicts",
+        "clinvar_variation_id": "421014",
+        "gold_stars": 2,
+        "platform": "WGS",
+        "conditions": [],
+        "condition_ids": [],
+        "molecular_consequence": null,
+        "origin": [],
+        "allele_id": null,
+        "genotype": "C/CAG",
+        "zygosity": "het",
+        "filter": "PASS",
+        "qual": 100.0,
+        "gq": 60,
+        "dp": 32
+      },
+      "link": "https://www.ncbi.nlm.nih.gov/clinvar/variation/421014/",
+      "pmids": []
+    }
+  ],
+  "sources": {
+    "ewas": {
+      "url": "https://www.ewascatalog.org/api/?cpg=cg05575921",
+      "retrieved": "2026-09-06",
+      "coordinate_note": "EWAS chrpos is original study annotation; input mapping uses explicit EPICv2 hg38 coordinates."
+    },
+    "clinvar": {
+      "record_url": "https://www.ncbi.nlm.nih.gov/clinvar/variation/421014/",
+      "source_file": "GeneAsk/geneask/data/reference/clinvar_panel_157genes.json.gz",
+      "source_sha256": "4943ace4b1b15e8622566f4f0bb88659f3aabb0fc3315fa108c332e4eb0e5117",
+      "snapshot_date": "2026-09-06"
+    },
+    "probe_map": {
+      "source": "MethylAsk/methylask/data/reference/manifests/EPICv2.hg38.manifest.tsv.gz",
+      "coordinates": "0-based forward CpG start; four selected probes only"
+    }
+  }
+}

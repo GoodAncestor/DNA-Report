@@ -14,6 +14,38 @@ GOOD = (
 )
 
 
+class OpenAIStub:
+    """An OpenAI-compatible responder at urllib's network boundary."""
+
+    def __init__(self):
+        self.requests = []
+
+    def __call__(self, request, timeout):
+        self.requests.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "body": json.loads(request.data),
+                "timeout": timeout,
+            }
+        )
+        document = {
+            "choices": [{"message": {"content": f"<dive>{GOOD}</dive>"}}]
+        }
+
+        class Response:
+            def read(self):
+                return json.dumps(document).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        return Response()
+
+
 class Fake:
     def __init__(self, text=GOOD, fail=False):
         self.text = text
@@ -190,3 +222,75 @@ def test_openai_compat_refuses_a_group_readable_key_file(tmp_path):
 
     with pytest.raises(PermissionError, match="0600"):
         backend.draft("sys", "usr", timeout=5)
+
+
+@pytest.mark.parametrize("key", [None, "stub-secret"])
+def test_openai_compat_end_to_end_against_in_process_stub(
+    env, monkeypatch, tmp_path, key
+):
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_BACKEND", "openai_compat")
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_MODEL", "stub-model")
+    monkeypatch.delenv("DNAREPORT_EXPLAIN_KEY_FILE", raising=False)
+    if key:
+        key_file = tmp_path / "stub-key"
+        key_file.write_text(f"{key}\n")
+        key_file.chmod(0o600)
+        monkeypatch.setenv("DNAREPORT_EXPLAIN_KEY_FILE", str(key_file))
+
+    stub = OpenAIStub()
+    monkeypatch.setattr(explain.urllib.request, "urlopen", stub)
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_BASE_URL", "http://stub.invalid/v1")
+
+    result = _result()
+    outcome = explain.explain_promoted(result)
+
+    assert outcome == {
+        "drafted": 1,
+        "cached": 0,
+        "rejected": 0,
+        "skipped": 0,
+    }
+    assert result.read_first[0].deeper_dive == GOOD
+    assert result.read_first[0].deeper_dive_meta == {
+        "backend": "openai_compat",
+        "model": "stub-model",
+        "prompt_version": explain.PROMPT_VERSION,
+    }
+    assert len(stub.requests) == 1
+    request = stub.requests[0]
+    assert request["url"] == "http://stub.invalid/v1/chat/completions"
+    assert request["authorization"] == (f"Bearer {key}" if key else None)
+    assert request["body"]["model"] == "stub-model"
+    assert request["body"]["messages"][0]["role"] == "system"
+    public_facts = json.loads(request["body"]["messages"][1]["content"])
+    assert public_facts["marker"] == "13-0-A-G"
+    assert "genotype" not in public_facts
+
+    cached = explain.explain_promoted(_result())
+    assert cached == {
+        "drafted": 0,
+        "cached": 1,
+        "rejected": 0,
+        "skipped": 0,
+    }
+    assert len(stub.requests) == 1
+
+
+def test_disabled_explanation_gate_never_calls_in_process_stub(
+    env, monkeypatch
+):
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_ENABLED", "0")
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_MODEL", "stub-model")
+
+    stub = OpenAIStub()
+    monkeypatch.setattr(explain.urllib.request, "urlopen", stub)
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_BASE_URL", "http://stub.invalid/v1")
+
+    assert explain.select_backend() is None
+    assert explain.explain_promoted(_result()) == {
+        "drafted": 0,
+        "cached": 0,
+        "rejected": 0,
+        "skipped": 0,
+    }
+    assert stub.requests == []
