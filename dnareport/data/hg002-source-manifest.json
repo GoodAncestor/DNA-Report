@@ -1,0 +1,137 @@
+{
+  "sample_id": "HG002",
+  "cell_line": "GM24385",
+  "material": "cultured lymphoblastoid reference cell line",
+  "dataset": "giab_2025.01",
+  "flowcell": "PAW70337",
+  "basecalling": "sup",
+  "reference_from_vcf_header": "GCA_000001405.15_GRCh38_no_alt_analysis_set.fasta",
+  "vcf_sample_label": "SAMPLE",
+  "license_registry": "CC BY-NC 4.0",
+  "checked_local_date": "2026-09-06",
+  "sources": {
+    "release": "https://epi2me.nanoporetech.com/giab-2025.01/",
+    "registry": "https://registry.opendata.aws/ont-open-data/",
+    "consent_and_benchmarks": "https://www.nist.gov/programs-projects/genome-bottle",
+    "partition_implementation": "https://github.com/epi2me-labs/wf-human-variation/blob/v2.4.1/workflows/methyl.nf"
+  },
+  "reported_statistics": {
+    "Contaminated": "n/a",
+    "N50": 29413,
+    "Yield": 153264463825,
+    "Yield (reads >=Nbp)": {
+      "0": 153264463825,
+      "5000": 149218383544,
+      "10000": 142062743224,
+      "15000": 133760504203,
+      "20000": 120509667712,
+      "25000": 99487124507,
+      "30000": 73568902858,
+      "35000": 49374360689,
+      "40000": 30755627564,
+      "45000": 18185768441,
+      "50000": 10549491934,
+      "55000": 6356457927,
+      "60000": 4259978585,
+      "65000": 3201150723,
+      "70000": 2586192567,
+      "75000": 2173217986,
+      "80000": 1901991982,
+      "85000": 1720966127,
+      "90000": 1594053522,
+      "95000": 1503233473,
+      "100000": 1433174256
+    },
+    "Read number": 8155127,
+    "Reads mapped": 8155127,
+    "Reads mapped (%)": 100.0,
+    "Primary mappings": 8155127,
+    "Secondary mappings": 0,
+    "Supplementary mappings": 0,
+    "Unmapped reads": 0,
+    "Median read quality": 25.97,
+    "Median read length": 17958,
+    "Chromosomal depth (mean)": 45.318083333333334,
+    "Total depth (mean)": 46.76,
+    "Bases with >=N-fold coverage": {
+      "1": 2929550216,
+      "10": 2908868197,
+      "15": 2895828890,
+      "20": 2863500085,
+      "30": 2735316679
+    },
+    "SNVs": 4779852,
+    "Indels": 889794,
+    "Transition/Transversion rate": 1.7,
+    "SV insertions": 19895,
+    "SV deletions": 15774,
+    "Other SVs": 137,
+    "Predicted sex chromosome karyotype": "XY",
+    "meta": {
+      "sample_sheet": {
+        "alias": "SAMPLE"
+      }
+    }
+  },
+  "statistics_sha256": "ed2e009f974c4435323961060fc1c314bd0a20ccc4094d3a707633ca27716923",
+  "files": [
+    {
+      "Key": "giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.mosdepth.summary.txt",
+      "url": "https://ont-open-data.s3.amazonaws.com/giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.mosdepth.summary.txt",
+      "bytes": 14596,
+      "etag": "\"29692475f2ae3a09504526d7dedd7808\"",
+      "local_name": "SAMPLE.mosdepth.summary.txt",
+      "sha256": "25213fd6b569bf371facfdb9fe06f0d06ef3c82b96bb7b26b32367db2f75778e"
+    },
+    {
+      "Key": "giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.stats.json",
+      "url": "https://ont-open-data.s3.amazonaws.com/giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.stats.json",
+      "bytes": 1205,
+      "etag": "\"c692d4d75717cea95b3d98b5b76c1456\"",
+      "local_name": "SAMPLE.stats.json",
+      "sha256": "ed2e009f974c4435323961060fc1c314bd0a20ccc4094d3a707633ca27716923"
+    },
+    {
+      "Key": "giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_mods.1.bedmethyl.gz",
+      "url": "https://ont-open-data.s3.amazonaws.com/giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_mods.1.bedmethyl.gz",
+      "bytes": 610668625,
+      "etag": "\"fb79ebea9380ef6e525b5b412b6b95cf-73\"",
+      "local_name": "SAMPLE.wf_mods.1.bedmethyl.gz",
+      "sha256": "e26c679321de3e034c5be804c480d146e9aa89e8dca993d59cf95f8eae40c137"
+    },
+    {
+      "Key": "giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_mods.2.bedmethyl.gz",
+      "url": "https://ont-open-data.s3.amazonaws.com/giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_mods.2.bedmethyl.gz",
+      "bytes": 607044178,
+      "etag": "\"07c07965da7232e40857bcc887486297-73\"",
+      "local_name": "SAMPLE.wf_mods.2.bedmethyl.gz",
+      "sha256": "becbb04b352b5c1af3619de154b9ff5ce265f906f7c8b0c7ff678b401646b0bb"
+    },
+    {
+      "Key": "giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_mods.ungrouped.bedmethyl.gz",
+      "url": "https://ont-open-data.s3.amazonaws.com/giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_mods.ungrouped.bedmethyl.gz",
+      "bytes": 264743609,
+      "etag": "\"bb4b33d893274f190fec474294451878-32\"",
+      "local_name": "SAMPLE.wf_mods.ungrouped.bedmethyl.gz",
+      "sha256": "df083f13c5efdf24bccb9eb226bc93de9874eb6e35008277453fffdf61d277ad"
+    },
+    {
+      "Key": "giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_snp.vcf.gz",
+      "url": "https://ont-open-data.s3.amazonaws.com/giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_snp.vcf.gz",
+      "bytes": 267886480,
+      "etag": "\"b9a780bd82bdeb1af4f63c3a385dee2a-32\"",
+      "local_name": "SAMPLE.wf_snp.vcf.gz",
+      "sha256": "ff50273158eb1cde37f826a9c273765ef5d1205661f9f095bcfe43e48fd70a02"
+    },
+    {
+      "Key": "giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_snp.vcf.gz.tbi",
+      "url": "https://ont-open-data.s3.amazonaws.com/giab_2025.01/analysis/wf-human-variation/sup/HG002/PAW70337/output/SAMPLE.wf_snp.vcf.gz.tbi",
+      "bytes": 1791521,
+      "etag": "\"aa6b7a5ac322909ae65e4b87bd079945\"",
+      "local_name": "SAMPLE.wf_snp.vcf.gz.tbi",
+      "sha256": "b7e5bcb44a46e78c67c3db893b80969cd6b6337948818202aab61035b89af9c7"
+    }
+  ],
+  "verification": "Full selected derived files downloaded; exact byte lengths checked and local SHA256 calculated. Publisher multipart ETags are not SHA256 checksums.",
+  "initial_inspection_scope": "Object listings, run statistics, and bounded gzip prefixes checked; no full sequence/variant/methylation files downloaded. ETags recorded as object metadata, not assumed whole-file checksums."
+}

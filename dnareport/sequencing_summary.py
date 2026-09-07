@@ -61,6 +61,28 @@ def summary_html(result):
                 reading += f" ({row['valid_reads']} valid reads; fraction withheld)"
             introduction += "<li>" + html.escape(f"{row['probe']}: {reading}") + "</li>"
         introduction += "</ul>"
+    reference = result.scan_stats["nanopore"].get("reference_dataset", {})
+    if reference:
+        annotations = result.scan_stats["nanopore"].get("annotations", {})
+        introduction = (
+            "<aside class='reference-demo-notice' style='padding:16px;color:var(--ink,#1b1c18);background:var(--accent-soft,#e6efe9);border:1px solid var(--accent,#2b6a5b);border-radius:6px'>"
+            "<strong>HG002 reference genome + methylome</strong>"
+            "<p>Real published Nanopore measurements from the HG002 / GM24385 cultured lymphoblastoid cell line. "
+            "This report describes a reference sample; it does not assess the donor's or reader's health, lifestyle or biological age.</p>"
+            f"<p>Publisher-reported mean coverage: {reference['reported_mean_depth']:.2f}×. "
+            f"{annotations['matched_association_rows']:,} research-association rows matched measured CpGs across "
+            f"{annotations['traits_with_associations']:,} traits. The browser shows one leading CpG for each of "
+            f"{annotations['displayed_trait_representatives']:,} selected traits, plus the retained ClinVar findings. "
+            "All EPICv2-mapped CpG measurements and matched EWAS rows are available below. Other genome-wide CpGs remain in the source bedMethyl files.</p>"
+            "<p>Download: <a href='/demo/hg002?format=json'>report JSON</a> · "
+            "<a href='/demo/hg002?format=markdown'>report Markdown</a> · "
+            "<a href='/demo/hg002/files/HG002.cpg-measurements.tsv.gz'>all EPICv2-mapped CpG measurements</a> · "
+            "<a href='/demo/hg002/files/HG002.associations.tsv.gz'>all matched associations</a> · "
+            "<a href='/demo/hg002/files/HG002.variant-findings.json.gz'>retained ClinVar findings</a> · "
+            "<a href='/demo/hg002/files/provenance.json'>provenance</a> · "
+            "<a href='/demo/hg002/files/artifact-index.json'>checksums</a></p>"
+            "<p>Source: <a href='https://epi2me.nanoporetech.com/giab-2025.01/'>Oxford Nanopore GIAB 2025.01</a>, "
+            "CC BY-NC 4.0. Published-output import and reporting are demonstrated here; basecalling and independent caller benchmarking have not run.</p></aside>")
     return ("<section class='sequencing-summary' style='max-width:900px;margin:28px 0;padding:22px;border:1px solid var(--line,#ddd);border-radius:8px;overflow-wrap:anywhere'>"
             + introduction +
             "<h2>Native sequencing measurements</h2>"
@@ -80,6 +102,9 @@ def summary_markdown(result):
     demo = result.scan_stats["nanopore"].get("demo", {})
     if demo.get("synthetic"):
         lines = ["## Synthetic Nanopore demo", "", demo["description"], "", demo.get("finding_scope", ""), "", demo["probe_scope"], ""] + lines
+    reference = result.scan_stats["nanopore"].get("reference_dataset", {})
+    if reference:
+        lines = ["## HG002 public reference dataset", "", "Real published measurements from a cultured lymphoblastoid cell line; no personal health or age prediction.", "", "Source: https://epi2me.nanoporetech.com/giab-2025.01/ — CC BY-NC 4.0.", "", "Complete tables and provenance: https://dna.goodancestor.com/demo/hg002", ""] + lines
     lines += [f"| {safe(key)} | {safe(value)} |" for key, value in rows]
     lines += ["", "The sample label links these outputs; a label alone does not verify biological identity.", "", CAUTIONS, "",
               "Coverage, thresholds, hashes and tool versions are retained in the JSON export.", ""]
