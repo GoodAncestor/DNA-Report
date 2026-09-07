@@ -790,7 +790,9 @@ def _cached_demo_html(key: str, build) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def landing():
-    return HTMLResponse(LANDING_HTML.replace("__ONT_ENABLED__", "true" if ONT_UPLOADS_ENABLED else "false"))
+    from .reference_demo import CARD, directory, ready
+    page = LANDING_HTML.replace("__ONT_ENABLED__", "true" if ONT_UPLOADS_ENABLED else "false")
+    return HTMLResponse(page.replace("__HG002_CARD__", CARD if ready(directory(RESULT_DIR)) else ""))
 
 
 @app.get("/disclaimer", response_class=PlainTextResponse)
@@ -875,6 +877,30 @@ def demo_nanopore(format: str = "", accept: str = Header(default="")):
         return JSONResponse(compose_result_views(build_demo())["json"])
     return HTMLResponse(_cached_demo_html("nanopore", lambda: report_html(
         build_demo(), filename="Synthetic Nanopore demo")))
+
+
+@app.get("/demo/hg002/files/{name}")
+def hg002_demo_file(name: str):
+    from fastapi.responses import FileResponse
+    from .reference_demo import FILES, directory, ready
+    root = directory(RESULT_DIR)
+    if name not in FILES or not ready(root):
+        raise HTTPException(404, "Public HG002 artifact is not available")
+    return FileResponse(root / name, media_type=FILES[name], filename=name)
+
+
+@app.get("/demo/hg002")
+def demo_hg002(format: str = "", accept: str = Header(default="")):
+    from fastapi.responses import FileResponse
+    from .reference_demo import directory, ready
+    if format not in ("", "html", "json", "markdown", "md"):
+        raise HTTPException(400, "Use html, json or markdown")
+    root = directory(RESULT_DIR)
+    if not ready(root):
+        raise HTTPException(503, "HG002 reference report has not been installed")
+    extension = "json" if _wants_json(accept, format) else "md" if format in ("markdown", "md") else "html"
+    media = {"html":"text/html", "json":"application/json", "md":"text/markdown"}[extension]
+    return FileResponse(root / f"report.{extension}", media_type=media)
 
 
 @app.get("/demo/{kind}")
@@ -1228,9 +1254,11 @@ def health():
     standalone box from a queue-backed one without reading its env — and which
     build it is running, so a deploy can be confirmed with one request instead of
     grepping a rendered report for markers."""
+    from .reference_demo import directory, ready
+    reference_demos = ["hg002"] if ready(directory(RESULT_DIR)) else []
     return {"status": "ok", "version": __version__, "commit": BUILD_COMMIT,
             "built": BUILD_TIME, "queue": queue_enabled(),
-            "json_api": bool(API_KEYS), "demos": sorted(list(_DEMOS) + ["combined", "nanopore"]),
+            "json_api": bool(API_KEYS), "demos": sorted(list(_DEMOS) + ["combined", "nanopore"] + reference_demos),
             "native_uploads_enabled": ONT_UPLOADS_ENABLED}
 
 

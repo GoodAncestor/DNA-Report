@@ -354,6 +354,7 @@ _LANDING_TEMPLATE = """<!doctype html>
        <div class="t">Nanopore genome + methylome</div>
        <div class="d">One fictional sample, linked variants and native CpG fractions.
          Explore coverage, missing measurements and downloadable test inputs.</div></a>
+     __HG002_CARD__
    </div>
    <p class="hint">Blood and buccal use public methylation profiles. Genome examples
      illustrate variant reporting; the combined example joins separate inputs.
