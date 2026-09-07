@@ -136,7 +136,7 @@ MULTIPART_MAX = int(os.environ.get("DNAREPORT_MULTIPART_MAX", 20 * 1024**3))
 # Kinds a queued job may declare. Mirrors KINDS in the Worker and the worker's own
 # dispatch; the analysis re-detects from the file regardless, so this is a gate on
 # what may be enqueued rather than a statement about what the file is.
-_QUEUE_KINDS = {"vcf", "vcf-multi", "idat", "modbam", "bedmethyl", "beta_matrix",
+_QUEUE_KINDS = {"vcf", "vcf-multi", "idat", "modbam", "pod5", "bedmethyl", "beta_matrix",
                 "23andme", "array_genotype"}
 
 
@@ -545,7 +545,7 @@ def _client_key(request) -> str:
 # the server-side half, because a client-side gate is a courtesy and not a
 # control. Compression suffixes are stripped first — a .vcf.gz is a .vcf.
 _SUPPORTED_EXT = {"txt", "csv", "tsv", "vcf", "bed", "bedmethyl", "idat",
-                  "bam", "modbam", "zip"}
+                  "bam", "modbam", "pod5", "zip"}
 
 
 def _extension_supported(filename: str) -> bool:
@@ -631,11 +631,58 @@ def _provided_person_inputs(age=None, sex=None):
     return values
 
 
+def _upload_metadata(*, kind=None, tissue=None, age=None, sex=None,
+                     sample_id=None, reference_build=None, min_coverage=None,
+                     combined_strands=None):
+    """Validate public metadata; server-owned paths/models are never accepted."""
+    values = _provided_person_inputs(age, sex)
+    if tissue not in (None, ""):
+        if tissue not in ("blood", "saliva", "buccal", "other"):
+            raise HTTPException(400, "Sample type must be blood, saliva, buccal, or other")
+        values["tissue"] = tissue
+    if sample_id not in (None, ""):
+        if not isinstance(sample_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", sample_id):
+            raise HTTPException(400, "Sample label must be 1–80 letters, numbers, dots, underscores, or hyphens")
+        values["sample_id"] = sample_id
+    if reference_build not in (None, ""):
+        if reference_build not in ("GRCh38", "hg38"):
+            raise HTTPException(400, "Native methylation currently requires GRCh38 / hg38")
+        values["reference_build"] = "GRCh38"
+    if kind == "bedmethyl" and "reference_build" not in values:
+        raise HTTPException(400, "Confirm the bedMethyl alignment reference build (GRCh38 / hg38)")
+    if kind == "pod5" and "sample_id" not in values:
+        raise HTTPException(400, "POD5 requires a label for this single sample")
+    if min_coverage not in (None, ""):
+        if isinstance(min_coverage, bool) or not re.fullmatch(r"[0-9]+", str(min_coverage)):
+            raise HTTPException(400, "Minimum methylation coverage must be a positive integer")
+        coverage = int(min_coverage)
+        if not 1 <= coverage <= 1000000:
+            raise HTTPException(400, "Minimum methylation coverage must be between 1 and 1000000")
+        values["min_coverage"] = coverage
+    if combined_strands not in (None, ""):
+        if combined_strands not in (True, False, "true", "false", "1", "0"):
+            raise HTTPException(400, "Combined strands must be true or false")
+        values["combined_strands"] = combined_strands in (True, "true", "1")
+    return values
+
+
+def _body_metadata(body, *, kind=None):
+    if any(key in body for key in ("reference_fasta", "nanopore_config", "nanopore_vcf", "vcf_path", "model_dir")):
+        raise HTTPException(400, "Reference files and calling models are configured by the server")
+    return _upload_metadata(kind=kind, **{key: body.get(key) for key in
+        ("tissue", "age", "sex", "sample_id", "reference_build", "min_coverage", "combined_strands")})
+
+
 def _run_and_respond(local, tissue, filename="", *, want_json=False,
-                     x_api_key="", key_q="", age=None, sex=None):
+                     x_api_key="", key_q="", age=None, sex=None,
+                     sample_id=None, reference_build=None, min_coverage=None,
+                     combined_strands=None):
     """Shared path for uploads and demos: detect, gate heavy kinds, run, then
     return HTML (human) or JSON (agents/products, key-guarded)."""
     kind = detect(local)
+    metadata = _upload_metadata(kind=kind.value, tissue=tissue, sample_id=sample_id,
+                                reference_build=reference_build, min_coverage=min_coverage,
+                                combined_strands=combined_strands)
     # A file we cannot classify is a REFUSAL, not an empty report. It used to fall
     # through to the analysis path, produce nothing, and return HTTP 200 with a
     # JSON body — which the page showed as one line of grey text, so a wrong file
@@ -669,7 +716,7 @@ def _run_and_respond(local, tissue, filename="", *, want_json=False,
         tissue = infer_tissue(filename or os.path.basename(local), header).tissue
 
     parsed_age, parsed_sex, person_notes = _person_inputs(age, sex)
-    analyze_kwargs = {"tissue": tissue}
+    analyze_kwargs = {**metadata, "tissue": tissue}
     if parsed_age is not None:
         analyze_kwargs["age"] = parsed_age
     if parsed_sex is not None:
@@ -875,16 +922,27 @@ async def upload_sign(request: Request):
 
 def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
                  notify_email: str = "", newsletter: bool = False,
-                 explain_backend: str | None = None, age=None, sex=None) -> str:
+                 explain_backend: str | None = None, age=None, sex=None,
+                 tissue=None, sample_id=None, reference_build=None,
+                 min_coverage=None, combined_strands=None) -> str:
     """Push a heavy job and return its id. Shared by /enqueue (called by the
     Cloudflare Worker) and the presigned multipart flow (where the app completes
     the upload itself and there is no Worker in the path at all)."""
+    if not isinstance(kind, str) or kind not in _QUEUE_KINDS:
+        raise HTTPException(400, "unknown kind")
+    file_kind = _advisory_kind(r2_key)
+    if file_kind in {"modbam", "pod5"}:
+        kind = file_kind
+    metadata = _upload_metadata(kind=kind, tissue=tissue, sample_id=sample_id,
+                                reference_build=reference_build, min_coverage=min_coverage,
+                                combined_strands=combined_strands)
     q = _queue()
     if q is None:
         raise HTTPException(status_code=503, detail="no queue backend configured")
     job_id = uuid.uuid4().hex
     parsed_age, parsed_sex, person_notes = _person_inputs(age, sex)
     job = {
+        **metadata,
         "job_id": job_id,
         "r2_key": r2_key,
         "kind": kind,
@@ -899,7 +957,8 @@ def _enqueue_job(r2_key: str, kind: str, n_samples: int = 1,
     if email and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         job["notify_email"] = email
         job["newsletter"] = bool(newsletter)
-    q.rpush("dnareport:jobs", json.dumps(job))
+    queue_name = "dnareport:jobs:ont" if kind in {"modbam", "pod5"} else "dnareport:jobs"
+    q.rpush(queue_name, json.dumps(job))
     # When this job was accepted, so the claim link can say how long the wait has
     # been and give up on a job that is never coming. Without it the app had no
     # idea whether a 202 was twenty seconds old or two hours old. TTL well past
@@ -924,6 +983,7 @@ async def multipart_create(request: Request):
     _rate_limit(_client_key(request))
     body = await _json_body(request)
     filename = str(body.get("filename") or "upload")
+    _body_metadata(body, kind=_advisory_kind(filename))
     if not _extension_supported(filename):
         raise UploadError(
             "unsupported_format", "We do not have a parser for this kind of file",
@@ -991,6 +1051,8 @@ async def multipart_complete(request: Request):
     """
     _rate_limit(_client_key(request))
     body = await _json_body(request)
+    kind = str(body.get("kind") or "")
+    metadata = _body_metadata(body, kind=kind)
     key, upload_id = str(body.get("key") or ""), str(body.get("uploadId") or "")
     _require_own_key(key)
     parts = body.get("parts") or []
@@ -1024,7 +1086,7 @@ async def multipart_complete(request: Request):
         int(body.get("n_samples") or 1),
         str(body.get("notify_email") or ""),
         bool(body.get("newsletter")),
-        **_provided_person_inputs(body.get("age"), body.get("sex")),
+        **metadata,
     )
     return {"job_id": job_id, "status": "queued", "r2_key": key}
 
@@ -1053,8 +1115,8 @@ async def analyze_r2(
     _rate_limit(_client_key(request))
     body = await _json_body(request)
     key = str(body.get("key") or "")
-    tissue = str(body.get("tissue") or "")
-    age, sex = body.get("age"), body.get("sex")
+    kind = _advisory_kind(key)
+    metadata = _body_metadata(body, kind=kind)
 
     # only keys this service minted: our prefix, and no traversal out of it
     if not key.startswith(R2_INLINE_PREFIX) or ".." in key:
@@ -1084,9 +1146,9 @@ async def analyze_r2(
         backend = _requested_explain_backend(explain, x_api_key, api_key)
         job_id = _enqueue_job(
             key,
-            _advisory_kind(key),
+            kind,
             explain_backend=backend,
-            **_provided_person_inputs(age, sex),
+            **metadata,
         )
         return _queued_response(job_id)
 
@@ -1107,8 +1169,8 @@ async def analyze_r2(
                 display = os.path.basename(local)
             # off the event loop, for the same reason as /analyze above
             return await run_in_threadpool(_run_and_respond, local,
-                                           tissue or None, filename=display,
-                                           age=age, sex=sex)
+                                           metadata.get("tissue"), filename=display,
+                                           **{k: v for k, v in metadata.items() if k != "tissue"})
     finally:
         # the object goes whether or not the analysis worked
         try:
@@ -1182,6 +1244,8 @@ def api_docs(x_api_key: str = Header(default=""), api_key: str = ""):
 async def analyze_inline(request: Request,
                          file: UploadFile = File(...), tissue: str = Form(default=""),
                          age: str = Form(default=""), sex: str = Form(default=""),
+                         sample_id: str = Form(default=""), reference_build: str = Form(default=""),
+                         min_coverage: str = Form(default=""), combined_strands: str = Form(default=""),
                          notify_email: str = Form(default=""),
                          newsletter: str = Form(default=""),
                          format: str = "", accept: str = Header(default=""),
@@ -1220,6 +1284,12 @@ async def analyze_inline(request: Request,
             if unwrapped:
                 display = os.path.basename(local)
 
+            kind = detect(local)
+            kind_name = kind.value if kind != InputKind.UNKNOWN else _advisory_kind(display)
+            metadata = _upload_metadata(kind=kind_name, tissue=tissue, age=age, sex=sex,
+                                        sample_id=sample_id, reference_build=reference_build,
+                                        min_coverage=min_coverage, combined_strands=combined_strands)
+
             # Hand it to a worker rather than analysing it on the front door. The
             # archive is unwrapped FIRST, so what reaches R2 is the genotype file
             # itself — a worker has no unwrap step, and shipping the .zip would
@@ -1243,9 +1313,9 @@ async def analyze_inline(request: Request,
                 # delivery is never added to the newsletter unless that box was
                 # ticked too. _enqueue_job validates the address.
                 return _queued_response(_enqueue_job(
-                    key, _advisory_kind(display), 1, notify_email,
+                    key, kind_name, 1, notify_email,
                     newsletter not in ("", "0", "false"),
-                    **_provided_person_inputs(age, sex)))
+                    **metadata))
 
             # Off the event loop. Everything below _run_and_respond is
             # synchronous and can run for minutes on a large array, so calling
@@ -1256,7 +1326,8 @@ async def analyze_inline(request: Request,
             return await run_in_threadpool(
                 _run_and_respond, local, tissue or None, filename=display,
                 want_json=_wants_json(accept, format),
-                x_api_key=x_api_key, key_q=api_key, age=age, sex=sex)
+                x_api_key=x_api_key, key_q=api_key,
+                **{k: v for k, v in metadata.items() if k != "tissue"})
         except UploadError as exc:
             # name the file the user actually chose, so the refusal page can show it
             exc.filename = exc.filename if getattr(exc, "filename", "") else display
@@ -1278,6 +1349,10 @@ def enqueue(
     """Called by the R2 upload Worker (not reviewers). Push a heavy job."""
     if not ENQUEUE_TOKEN or authorization != f"Bearer {ENQUEUE_TOKEN}":
         raise HTTPException(status_code=401, detail="bad enqueue token")
+    if (not isinstance(payload.get("r2_key"), str) or not isinstance(payload.get("kind"), str)
+            or payload.get("kind") not in _QUEUE_KINDS):
+        raise HTTPException(400, "r2_key and a supported kind are required")
+    metadata = _body_metadata(payload, kind=payload["kind"])
     # Optional, UNBUNDLED consent (see the upload form): a user may give an email
     # ONLY to be notified their report is ready, and SEPARATELY opt in to the
     # newsletter. The two are independent — an email for delivery is never added
@@ -1290,7 +1365,7 @@ def enqueue(
         payload.get("notify_email") or "",
         payload.get("newsletter"),
         explain_backend=backend,
-        **_provided_person_inputs(payload.get("age"), payload.get("sex")),
+        **metadata,
     )
     return {"job_id": job_id, "status": "queued"}
 
@@ -1321,10 +1396,11 @@ def _advisory_kind(name: str) -> str:
     contents, so this never decides how the file is analysed. It exists so an
     operator reading the queue can tell what is in it.
     """
-    n = (name or "").lower()
+    n = (name or "").lower().removesuffix(".gz")
     for ext, kind in ((".vcf", "vcf"), (".idat", "idat"), (".bam", "modbam"),
-                      (".bed", "bedmethyl"), (".csv", "beta_matrix")):
-        if ext in n:
+                      (".modbam", "modbam"), (".pod5", "pod5"),
+                      (".bed", "bedmethyl"), (".bedmethyl", "bedmethyl"), (".csv", "beta_matrix")):
+        if n.endswith(ext):
             return kind
     return "array_genotype"
 

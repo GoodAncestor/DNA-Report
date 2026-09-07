@@ -117,8 +117,9 @@ _LANDING_TEMPLATE = """<!doctype html>
 
  .controls{margin:24px 0 0}
  .field{display:flex;gap:12px;flex-wrap:wrap;align-items:baseline;margin:0 0 16px}
+ #ont-controls[hidden],#strand-control[hidden]{display:none}
  .field > label{font:500 14px/1.9 var(--sans);color:var(--ink);min-width:112px}
- select,input[type=email]{font:14px/1 var(--sans);padding:9px 11px;border-radius:3px;
+ select,input[type=email],input[type=text],input[type=number]{font:14px/1 var(--sans);padding:9px 11px;border-radius:3px;
    border:1px solid var(--hair);background:var(--card);color:var(--ink);min-width:190px}
  select:focus,input:focus{outline:2px solid var(--accent);outline-offset:1px}
  .hint{font-size:13px;line-height:1.5;color:var(--mut);flex:1 1 15em;min-width:0}
@@ -202,12 +203,44 @@ _LANDING_TEMPLATE = """<!doctype html>
      <p><label class="btn" for="file">Choose a file</label>
        <input id="file" type="file" hidden></p>
      <p class="kinds">A methylation beta-value export (e.g. a TruDiagnostic CSV),
-       an EPIC array file, a 23andMe or VCF genome, or an ONT modBAM.</p>
+       an EPIC array file, a 23andMe or VCF genome, or Oxford Nanopore
+       POD5, modBAM, and bedMethyl files.</p>
    </div>
 
    <div class="recog" id="recog" aria-live="polite">
      <div class="name" id="recog-name"></div>
      <div class="meta" id="recog-meta"></div>
+   </div>
+
+   <div class="controls" id="ont-controls" hidden>
+     <div class="field">
+       <label for="sample_id">Sample label</label>
+       <input id="sample_id" type="text" maxlength="80" placeholder="my-sample-01" pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,79}">
+       <span class="hint">Use a private label for one person's sample. Required for POD5;
+         for BAM, it must agree with any sample label already in the file.</span>
+     </div>
+     <div class="field">
+       <label for="reference_build">Alignment reference</label>
+       <select id="reference_build">
+         <option value="">Choose from your run record</option>
+         <option value="GRCh38">GRCh38 / hg38</option>
+       </select>
+       <span class="hint">Required for bedMethyl. This confirms how coordinates were generated;
+         it does not convert them from another reference.</span>
+     </div>
+     <div class="field">
+       <label for="min_coverage">Minimum methylation coverage</label>
+       <input id="min_coverage" type="number" min="1" max="1000000" step="1" value="5" style="width:7em">
+       <span class="hint">CpGs below this many valid calls remain unreported.</span>
+     </div>
+     <div class="field" id="strand-control">
+       <label class="check" for="combined_strands"><input id="combined_strands" type="checkbox">
+         bedMethyl strands already combined</label>
+       <span class="hint">Select only when your caller combined both CpG strands at the
+         forward CpG start. Leave off for separate + and &minus; rows.</span>
+     </div>
+     <p class="hint">Native sequencing measures 5mC separately from 5hmC. Array-trained
+       age clocks and reference-group classification are disabled for these files.</p>
    </div>
 
    <div class="controls">
@@ -227,8 +260,8 @@ _LANDING_TEMPLATE = """<!doctype html>
      <div class="field">
        <label for="age">Age</label>
        <input id="age" type="number" inputmode="numeric" min="0" max="120" step="1" placeholder="years" style="width:7em">
-       <span class="hint">Optional. Your age lets the epigenetic clocks show how far they sit from it.
-         We estimate it from your file and show the estimate.</span>
+       <span class="hint">Optional. For supported array files, age gives epigenetic clocks
+         a comparison point. Array-trained clocks are disabled for native Nanopore files.</span>
      </div>
 
      <div class="field">
@@ -357,8 +390,9 @@ _LANDING_TEMPLATE = """<!doctype html>
  const KIND_HINTS = [
    [/\\.idat$/i,                 'Illumina IDAT (raw array)',        'heavy'],
    [/\\.(mod)?bam$/i,            'ONT modBAM (genome + methylome)',  'heavy'],
+   [/\\.pod5$/i,                  'Oxford Nanopore raw signal',       'heavy'],
    [/\\.vcf(\\.gz)?$/i,           'VCF genome',                       'light'],
-   [/\\.bed(methyl)?(\\.gz)?$/i,  'bedMethyl methylation calls',      'light'],
+   [/\\.bed(methyl)?(\\.gz)?$/i,  'bedMethyl methylation calls',      'heavy'],
    [/23andme|genome_.*\\.txt$/i,  '23andMe raw export',               'light'],
    [/ancestry|ftdna|myheritage|livingdna/i, 'Consumer genotype export', 'light'],
    // .csv/.tsv/.txt carry several different formats, so the name alone cannot
@@ -393,7 +427,7 @@ _LANDING_TEMPLATE = """<!doctype html>
  // ever supported — and .pdf, .docx and friends. Extensions we DO handle are let
  // through to the content sniff rather than trusted, because .txt/.csv/.tsv each
  // carry several different formats and only the header says which.
- const ALLOWED_EXT = ['txt','csv','tsv','vcf','bed','bedmethyl','idat','bam','modbam'];
+ const ALLOWED_EXT = ['txt','csv','tsv','vcf','bed','bedmethyl','idat','bam','modbam','pod5'];
  function extAllowed(name){
    const n = String(name).toLowerCase().replace(/\\.gz$/,'');
    if(/\\.zip$/.test(n)) return true;
@@ -402,18 +436,25 @@ _LANDING_TEMPLATE = """<!doctype html>
  }
 
  const SNIFF_BYTES = 256 * 1024;
- const SNIFF_BINARY = /\\.(idat|bam|modbam)$/i;   // opaque; the extension is the contract
+ const SNIFF_BINARY = /\\.(idat|bam|modbam|pod5)$/i;   // opaque; the extension is the contract
  const SNIFF_VCF = /\\.vcf(\\.gz)?$/i;
 
  async function sniffHead(file){
    let blob = file.slice(0, SNIFF_BYTES);
    if(/\\.gz$/i.test(file.name) && typeof DecompressionStream!=='undefined'){
+     let reader;
      try{
-       // a sliced gzip stream ends mid-member, so the stream errors after
-       // yielding what it could decode — that prefix is all the sniff needs
-       blob = await new Response(
-         blob.stream().pipeThrough(new DecompressionStream('gzip'))).blob();
+       // Read a bounded decoded prefix from the complete source stream. Cutting
+       // compressed bytes first produces a truncated gzip error on large files.
+       reader=file.stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+       const chunks=[]; let size=0;
+       while(size<SNIFF_BYTES){
+         const {value,done}=await reader.read(); if(done)break;
+         const part=value.slice(0,SNIFF_BYTES-size); chunks.push(part); size+=part.length;
+       }
+       blob=new Blob(chunks);
      }catch(err){ /* undecodable prefix: fall through to extension rules */ }
+     finally{ if(reader)await reader.cancel().catch(()=>{}); }
    }
    try{ return await blob.text(); }catch(err){ return ''; }
  }
@@ -421,6 +462,7 @@ _LANDING_TEMPLATE = """<!doctype html>
  // Mirrors dnareport/detect.py. Returns a human label, or null when nothing in
  // the file identifies it as something we can parse.
  function classifyHead(name, text){
+   if(/\\.pod5$/i.test(name)) return 'Oxford Nanopore raw signal';
    if(SNIFF_BINARY.test(name)) return 'Raw array / BAM';
    if(SNIFF_VCF.test(name)) return 'VCF genome';
    // A zip's head is compressed member data, so sniffing it reads as noise and
@@ -441,7 +483,9 @@ _LANDING_TEMPLATE = """<!doctype html>
      const c = body[0].replace(/\\r$/,'').split('\\t');
      if(c.length===4 && /^(rs|i)/i.test(c[0]) && c[3].trim().length<=2)
        return 'Consumer genotype export';
-     if(c.length>=11 && c[3] && /^[a-z]+,(CG|CHG|CHH),/i.test(c[3]))
+     const bed = body[0].trim().split(/\\s+/);
+     if(bed.length>=18 && /^(m|h|a|21839|27551)(,(CG|CHG|CHH),.*)?$/i.test(bed[3])
+        && /^[+.-]$/.test(bed[5]) && /^\\d+$/.test(bed[1]) && /^\\d+$/.test(bed[9]))
        return 'bedMethyl methylation calls';
      for(const bl of body.slice(0,5)){
        const cc = bl.replace(/\\r$/,'').split(',');
@@ -476,10 +520,22 @@ _LANDING_TEMPLATE = """<!doctype html>
    tissue=document.getElementById('tissue'), recog=document.getElementById('recog'),
    ageIn=document.getElementById('age'), sexIn=document.getElementById('sex'),
    recogName=document.getElementById('recog-name'), recogMeta=document.getElementById('recog-meta');
- let chosen=null;
+ let chosen=null, detectedKind=null;
+ const ontControls=document.getElementById('ont-controls');
+ function uploadMetadata(){
+   const values={tissue:tissue.value||'',age:ageIn.value||'',sex:sexIn.value||''};
+   if(!ontControls.hidden){
+     values.sample_id=document.getElementById('sample_id').value||'';
+     values.reference_build=document.getElementById('reference_build').value||'';
+     values.min_coverage=document.getElementById('min_coverage').value||'';
+     values.combined_strands=document.getElementById('combined_strands').checked;
+   }
+   return values;
+ }
 
  async function pick(f){
-   chosen=f; go.disabled=!f; statusEl.textContent=''; clearFail();
+   chosen=f; detectedKind=null; ontControls.hidden=true;
+   go.disabled=!f; statusEl.textContent=''; clearFail();
    if(!f){ recog.classList.remove('show'); return; }
    const d=describe(f);
    recogName.textContent=f.name;
@@ -511,6 +567,16 @@ _LANDING_TEMPLATE = """<!doctype html>
    if(chosen!==f) return;                       // a newer pick superseded this one
    const label = classifyHead(f.name, text);
    if(label===null){ go.disabled=true; refuseUnreadable(f, text); return; }
+   detectedKind=label==='bedMethyl methylation calls'?'bedmethyl':null;
+   const nativeKind=detectedKind||heavyKind(f.name);
+   ontControls.hidden=!['pod5','modbam','bedmethyl'].includes(nativeKind);
+   tissue.options[0].textContent=ontControls.hidden?'Auto-detect':'Not specified';
+   document.getElementById('tissuehint').textContent=ontControls.hidden
+     ? 'We infer this from your file and use it to decide which epigenetic clocks are valid — you can override it.'
+     : 'Record the collection tissue for context. Array-trained clocks remain disabled for native sequencing.';
+   document.getElementById('strand-control').hidden=nativeKind!=='bedmethyl';
+   document.getElementById('sample_id').required=nativeKind==='pod5';
+   document.getElementById('reference_build').required=nativeKind==='bedmethyl';
    recogMeta.replaceChildren(
      Object.assign(document.createElement('b'),{textContent:label}),
      document.createTextNode(' \\u00b7 '+humanSize(f.size)+' \\u00b7 '+route));
@@ -677,11 +743,12 @@ _LANDING_TEMPLATE = """<!doctype html>
  // the Worker validates `kind` against its own allow-list, so these strings
  // must stay in step with KINDS in cloudflare/r2-upload-worker.js
  const HEAVY_KIND = [
-   [/\\.idat$/i, 'idat'], [/\\.(mod)?bam$/i, 'modbam'],
-   [/\\.vcf(\\.gz)?$/i, 'vcf'], [/\\.bed(methyl)?$/i, 'bedmethyl'],
+   [/\\.idat$/i, 'idat'], [/\\.(mod)?bam$/i, 'modbam'], [/\\.pod5$/i, 'pod5'],
+   [/\\.vcf(\\.gz)?$/i, 'vcf'], [/\\.bed(methyl)?(\\.gz)?$/i, 'bedmethyl'],
    [/\\.csv$/i, 'beta_matrix'],
  ];
  function heavyKind(name){
+   if(chosen && name===chosen.name && detectedKind) return detectedKind;
    for(const [re,k] of HEAVY_KIND){ if(re.test(name)) return k; }
    return '23andme';
  }
@@ -702,10 +769,11 @@ _LANDING_TEMPLATE = """<!doctype html>
  // front door only ever sees small JSON, which is the part inspection can read.
  async function largeUpload(file){
    const kind=heavyKind(file.name);
+   const metadata=uploadMetadata();
    setOverlay('Preparing a secure upload\\u2026');
    const init=await jsonOrThrow(await fetch('/upload/multipart/create',{
      method:'POST',headers:{'content-type':'application/json','X-Error-Format':'json'},
-     body:JSON.stringify({filename:file.name,kind:kind,size:file.size})},
+     body:JSON.stringify({filename:file.name,kind:kind,size:file.size,...metadata})},
    ),'Starting the upload');
 
    const partSize=init.part_size||R2_PART;
@@ -739,7 +807,7 @@ _LANDING_TEMPLATE = """<!doctype html>
    const nl=document.getElementById('newsletter');
    const done=await jsonOrThrow(await fetch('/upload/multipart/complete',{
      method:'POST',headers:{'content-type':'application/json','X-Error-Format':'json'},
-     body:JSON.stringify({key:init.key,uploadId:init.uploadId,parts:parts,kind:kind,
+     body:JSON.stringify({key:init.key,uploadId:init.uploadId,parts:parts,kind:kind,...metadata,
        notify_email:(em&&em.value)||'',newsletter:!!(nl&&nl.checked)})},
    ),'Finishing the upload');
 
@@ -794,7 +862,7 @@ _LANDING_TEMPLATE = """<!doctype html>
  // /analyze just to be told 413. Everything else tries the fast path first and
  // falls back if the server says it is too heavy — the server stays the
  // authority on what "heavy" means; this list only avoids a wasted round trip.
- const ALWAYS_HEAVY=/\\.(idat|bam|modbam)$/i;
+ const ALWAYS_HEAVY=/\\.(idat|bam|modbam|pod5|bed|bedmethyl)(\\.gz)?$/i;
 
  // Size routing is not an optimisation — it is what makes a whole-genome upload
  // work at all. An oversized POST is refused AT THE EDGE, before the app can
@@ -844,7 +912,7 @@ _LANDING_TEMPLATE = """<!doctype html>
      const r=await fetch('/analyze/r2',{method:'POST',
        headers:{'content-type':'application/json','Accept':'text/html',
                 'X-Error-Format':'json'},
-       body:JSON.stringify({key:sign.key,tissue:tissue.value||'',age:ageIn.value||'',sex:sexIn.value||''})});
+       body:JSON.stringify({key:sign.key,...uploadMetadata()})});
      const ct=r.headers.get('content-type')||'';
      // same rule as the inline path: only a SUCCESSFUL html response may replace
      // this page, so an edge error page can never be grafted in as a report
@@ -904,10 +972,15 @@ _LANDING_TEMPLATE = """<!doctype html>
 
  go.onclick=async()=>{
    if(!chosen)return;
+   if(!ontControls.hidden){
+     for(const input of ontControls.querySelectorAll('input,select')){
+       if(!input.reportValidity())return;
+     }
+   }
    go.disabled=true; clearFail();
    showOverlay();
 
-   if(ALWAYS_HEAVY.test(chosen.name)){ await runLargeUpload(chosen); return; }
+   if(ALWAYS_HEAVY.test(chosen.name)||detectedKind==='bedmethyl'){ await runLargeUpload(chosen); return; }
    // Compressed: the front door cannot accept it whatever its size, so it goes
    // to storage directly. Under the analysis ceiling this still returns a report
    // in the same interaction; above it, runDirectUpload hands off to the queue.
@@ -922,9 +995,9 @@ _LANDING_TEMPLATE = """<!doctype html>
      setOverlay('Generating your report\\u2026');
      statusEl.textContent='Analyzing\\u2026 this runs on the server and may take a moment.';
      const fd=new FormData(); fd.append('file',payload);
-     if(tissue.value)fd.append('tissue',tissue.value);
-     if(ageIn.value)fd.append('age',ageIn.value);
-     if(sexIn.value)fd.append('sex',sexIn.value);
+     for(const [key,value] of Object.entries(uploadMetadata())){
+       if(value!=='')fd.append(key,String(value));
+     }
      // Opt-ins ARE sent here now. They used to be omitted because /analyze
      // returned the report in this response, leaving nothing to notify about;
      // every upload is now handed to a worker, so a file posted here runs later
