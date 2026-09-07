@@ -195,6 +195,9 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     if person_line:
         out += [f"Your age and sex: {person_line}", ""]
 
+    from .sequencing_summary import summary_markdown
+    out += summary_markdown(result)
+
     if doc.get("important"):
         out += [
             "## Read this first", "",

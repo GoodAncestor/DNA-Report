@@ -79,6 +79,7 @@ ACCEPTED_FORMATS = [
     "modkit bedMethyl methylation calls (.bed, .bedmethyl)",
     "Illumina IDAT array file (.idat) — large-file upload",
     "ONT modBAM (.bam, .modbam) — large-file upload",
+    "Oxford Nanopore raw signal (.pod5) — configured Nanopore worker required",
 ]
 
 # Archive members that are never the data: checksums, readmes, macOS resource

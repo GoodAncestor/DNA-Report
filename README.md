@@ -13,12 +13,23 @@ with every finding tagged by evidence tier.
 |---|---|
 | 23andMe raw data, VCF | [GeneAsk](https://github.com/GoodAncestor/GeneAsk) (variants) |
 | methylation bedMethyl, Illumina beta-matrix / IDAT | [MethylAsk](https://github.com/GoodAncestor/MethylAsk) (methylation) |
-| ONT modBAM (combined genome + methylome) | **both** — [bio-core](https://github.com/GoodAncestor/bio-core) splits the file into a methylation stream and a variant stream, each engine takes its part |
+| ONT modBAM or POD5 | Local Dorado/alignment as needed, then Clair3 variants and modkit methylation from the same BAM → GeneAsk + MethylAsk |
+
+## Native Oxford Nanopore sequencing
+
+[Setup, commands, outputs and validation scope](dnareport/docs/NANOPORE.md) describe
+how a native run becomes one genome/methylation report. This path requires locally
+installed tools, compatible models, a pinned GRCh38 reference, and private scratch
+storage. It never downloads sequencing models during analysis.
+
+The [OpenLab preparation protocol](https://github.com/GoodAncestor/open-dna-lab/pull/1)
+includes sample records and a review register for practical equipment adaptations.
 
 ## Where it sits
 
-DNA-Report owns **no analysis and no databases** — it is orchestration only. All
-the work is in the engines below it, and the report rendering is bio-core's. The
+DNA-Report orchestrates file preparation and the knowledge engines; it owns no
+reference databases. Variant calling and methylation extraction use external tools,
+interpretation lives in the engines below, and report rendering is shared with bio-core. The
 dependency direction is acyclic:
 
     bio-core                          (mechanism)
@@ -34,7 +45,8 @@ DNA-Report is the product that stitches the engines together.
 ## Install
 
 DNA-Report depends on three private `GoodAncestor` repos (bio-core, MethylAsk,
-GeneAsk), declared as git-source dependencies in `pyproject.toml`. A plain
+GeneAsk), pinned to coordinated commits in `pyproject.toml`. Update those pins
+to adopt reviewed engine changes. A plain
 `pip install .` resolves all three from GitHub, so the machine needs git access
 to the private repos (SSH key or a token in the git credential helper).
 

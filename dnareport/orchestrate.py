@@ -151,7 +151,8 @@ def _reference_findings(betas: dict, tissue: str | None = None):
 def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
                    age: float | None = None,
                    max_markers: int | None = 40, notes: list | None = None,
-                   scan_stats: dict | None = None, person_context: dict | None = None):
+                   scan_stats: dict | None = None, person_context: dict | None = None,
+                   nanopore_sample=None):
     """Call the MethylAsk engine -> (findings, provider_status, clocks). Import
     lazily so DNA-Report can run with only one engine installed.
 
@@ -168,7 +169,9 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
     from methylask import clocks as _clocks
 
     reg = Registry()
-    for p in (EwasCatalogProvider(), ClinVarProvider(), GdcProvider()):
+    provider_options = {"offline_only": True} if nanopore_sample is not None else {}
+    for p in (EwasCatalogProvider(**provider_options), ClinVarProvider(**provider_options),
+              GdcProvider(**provider_options)):
         reg.register(p)
 
     from methylask.normalize import base_probe
@@ -176,7 +179,12 @@ def _run_methylask(path: str, kind: InputKind, *, tissue: str | None = None,
     clock_results = []
     markers = []
     base_betas: dict = {}
-    if kind == InputKind.BETA_MATRIX:
+    if nanopore_sample is not None:
+        # Native read fractions locate research associations. Array-derived
+        # clocks and population comparisons require separate platform validation.
+        base_betas = dict(nanopore_sample.betas)
+        markers = list(nanopore_sample.markers)
+    elif kind == InputKind.BETA_MATRIX:
         sample = read_beta_matrix(path)
         markers = sample.markers                      # list[str] of probe ids
         # Clocks are keyed by BASE probe id. EPICv2 exports carry replicate
@@ -282,7 +290,8 @@ def _pysam_readable(path: str, kind: InputKind, result: "ReportResult"):
 
 def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
                  *, scan_stats: dict | None = None, statuses: list | None = None,
-                 person_context: dict | None = None):
+                 person_context: dict | None = None, offline_only: bool = False,
+                 allow_diplotypes: bool = True):
     """Interpret a single-sample VCF/23andMe callset -> (findings, status).
 
     Two screens: the ClinVar clinical panel (pathogenic/likely-pathogenic hits,
@@ -461,7 +470,7 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
                     f"CPIC provides drug guidance for {len(seen_genes)} gene(s) with variants."
                 )
 
-        platform = "ARRAY" if is_array else "WGS"
+        platform = "ARRAY" if is_array or not allow_diplotypes else "WGS"
         if not pharmcat.platform_ok(platform):
             notes.append(
                 "Pharmacogenomic guidance is by gene only: this file type does not "
@@ -516,6 +525,12 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
             notes.append(f"AlphaMissense: added pathogenicity to {amn} missense variants")
     except Exception:
         pass
+
+    if offline_only:
+        notes.append("Variant annotations used local reference data only; live per-variant APIs were not queried.")
+        for finding in findings:
+            finding.detail = {**(finding.detail or {}), "modality": "genome"}
+        return findings, notes, limits
 
     # AlphaGenome regulatory VEP, layered onto UNCERTAIN variant findings (the ones
     # ClinVar can't resolve): predicts a regulatory effect from sequence for
@@ -578,34 +593,6 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
     return findings, notes, limits
 
 
-def _run_modbam_methylation(path: str, *, reference_fasta: str | None = None):
-    """Extract the methylation stream from an ONT modBAM via bio-core and
-    summarize per-context weighted methylation as Findings (AGING/CLINICAL are
-    for interpreted markers; a whole-genome context summary is a TRAIT-level
-    descriptive finding). Returns a list of bio-core Findings."""
-    from biocore.io.modbam import pileup_methyl
-    from biocore.methylation.model import weighted_methylation, Context
-    from biocore.providers.base import Finding, Tier, Category
-
-    sites = list(pileup_methyl(path, min_prob=0.5, min_coverage=5,
-                               reference_fasta=reference_fasta))
-    by_ctx = {}
-    for s in sites:
-        by_ctx.setdefault(s.context, []).append(s)
-    findings = []
-    for ctx in (Context.CG, Context.CHG, Context.CHH):
-        cs = by_ctx.get(ctx, [])
-        if not cs:
-            continue
-        wm = weighted_methylation(cs, min_coverage=5) * 100
-        findings.append(Finding(
-            marker=f"modBAM:{ctx.value}", source="biocore.modbam",
-            description=f"Genome-wide {ctx.value} weighted methylation: {wm:.1f}% "
-                        f"over {len(cs)} covered cytosines (ONT MM/ML pileup, cov>=5)",
-            tier=Tier.MODERATE, categories=[Category.TRAIT]))
-    return findings
-
-
 def compare(vcf: str) -> ReportResult:
     """Reconcile multiple tests of one person from a merged multi-sample VCF.
 
@@ -632,11 +619,15 @@ def analyze(path: str, *, trait_table: str | None = None,
             reference_fasta: str | None = None,
             tissue: str | None = None,
             age: float | None = None,
-            sex: str | None = None) -> ReportResult:
+            sex: str | None = None,
+            nanopore_config=None, sample_id: str | None = None,
+            reference_build: str | None = None, min_coverage: int = 5,
+            nanopore_vcf: str | None = None, combined_strands: bool = False) -> ReportResult:
     """Detect, route, run engine(s), collect merged findings.
 
-    reference_fasta: optional; enables CG/CHG/CHH context resolution for a modBAM
-    (required to report non-CpG contexts).
+    reference_fasta: optional override for the locally configured GRCh38 FASTA.
+    Native input also requires reference/model/tool configuration; direct
+    bedMethyl requires an explicit reference_build declaration.
     tissue: sample tissue (e.g. 'blood','saliva','buccal'); passed to the clock
     engine so a clock trained on a different tissue is flagged, not trusted.
     """
@@ -656,18 +647,14 @@ def analyze(path: str, *, trait_table: str | None = None,
         result.notes.append(f"Could not determine file type for {path}; no engine routed.")
         return result
 
-    # modBAM: bio-core splits into methylation + variant streams.
-    if kind == InputKind.MODBAM:
-        try:
-            f = _run_modbam_methylation(path, reference_fasta=reference_fasta)
-            result.findings += f
-            result.notes.append("ONT modBAM: methylation stream extracted via bio-core "
-                                "(MM/ML pileup). Variant stream requires a variant caller "
-                                "on the same BAM (bcftools/DeepVariant) before GeneAsk can "
-                                "interpret it — not run here.")
-        except ImportError as e:
-            result.notes.append(f"bio-core modBAM reader unavailable ({e}); needs pysam.")
-        return result
+    if kind in (InputKind.MODBAM, InputKind.POD5, InputKind.BEDMETHYL):
+        from .nanopore_report import analyze_native
+        return analyze_native(
+            path, result, config=nanopore_config, reference_fasta=reference_fasta,
+            reference_build=reference_build, sample_id=sample_id,
+            min_coverage=min_coverage, vcf_path=nanopore_vcf,
+            combined_strands=combined_strands, trait_table=trait_table,
+        )
 
     # engines read `work`, which is `path` except for a plain-gzip VCF; scan_stats
     # keeps `path` so the report states the size of what the user actually uploaded.

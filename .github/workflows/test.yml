@@ -1,10 +1,9 @@
 # Run the test suite — on this repo's own pushes AND on every engine change.
 #
-# Why the engine trigger matters as much as the push one: biocore, methylask and
-# geneask are resolved from `main` at install time, so a change in any of them
-# alters this app without touching this repo. That is already why `build-image`
-# listens for `engine-updated`. Until this workflow existed, that dispatch built
-# and published an image from code nothing had run a test against.
+# The engine dependencies are pinned in pyproject.toml so the native bridge and
+# shared core install together. Update those pins to adopt reviewed engine changes.
+# build-image still invokes this workflow for its engine-updated dispatches;
+# the tested dependency revisions remain the ones recorded in this repository.
 #
 # Deploys here are user-visible downtime (the cloudflared sidecar is recreated
 # with the app) and the recovery for a bad image is another deploy, so the cheap

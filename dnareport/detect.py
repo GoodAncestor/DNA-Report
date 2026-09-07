@@ -26,6 +26,7 @@ class InputKind(str, Enum):
     BETA_MATRIX = "beta_matrix"
     IDAT = "idat"
     MODBAM = "modbam"
+    POD5 = "pod5"
     UNKNOWN = "unknown"
 
 
@@ -37,7 +38,8 @@ ROUTING = {
     InputKind.BEDMETHYL: ("methylask",),
     InputKind.BETA_MATRIX: ("methylask",),
     InputKind.IDAT: ("methylask",),
-    InputKind.MODBAM: ("bio-core-split", "methylask", "geneask"),  # split, then both
+    InputKind.MODBAM: ("nanopore", "methylask", "geneask"),  # split, then both
+    InputKind.POD5: ("nanopore", "methylask", "geneask"),
     InputKind.UNKNOWN: (),
 }
 
@@ -47,15 +49,12 @@ def _open_text(path):
 
 
 def _peek_lines(path, n=40):
+    from itertools import islice
     try:
         with _open_text(path) as fh:
-            return [next(fh) for _ in range(n)]
-    except (StopIteration, OSError, UnicodeDecodeError):
-        try:
-            with _open_text(path) as fh:
-                return fh.readlines()[:n]
-        except Exception:
-            return []
+            return list(islice(fh, n))
+    except (OSError, UnicodeDecodeError):
+        return []
 
 
 def detect(path: str) -> InputKind:
@@ -69,6 +68,8 @@ def detect(path: str) -> InputKind:
         return InputKind.IDAT
     if name.endswith((".bam", ".modbam")):
         return InputKind.MODBAM  # MM/ML-tag confirmation happens in the modBAM reader
+    if name.endswith(".pod5"):
+        return InputKind.POD5
     if ".vcf" in suffix:
         return InputKind.VCF
 
@@ -83,12 +84,14 @@ def detect(path: str) -> InputKind:
     if any("23andme" in l.lower() for l in header):
         return InputKind.TWENTYTHREE_AND_ME
     if body:
-        cols = body[0].rstrip("\n").split("\t")
+        cols = body[0].split()
         # 23andMe: 4 cols, col1 rsID, last col a 1-2 char genotype
         if len(cols) == 4 and cols[0].startswith(("rs", "i")) and len(cols[3].strip()) <= 2:
             return InputKind.TWENTYTHREE_AND_ME
-        # modkit bedMethyl: >=11 tab cols, col4 like "m,CG,0"
-        if len(cols) >= 11 and "," in cols[3] and cols[3].split(",")[1] in ("CG", "CHG", "CHH"):
+        # modkit extended bedMethyl includes valid/modification counts.
+        if len(cols) >= 18 and cols[3] in ("m", "h", "a", "21839", "27551") and cols[5] in ("+", "-", "."):
+            return InputKind.BEDMETHYL
+        if len(cols) >= 18 and "," in cols[3] and cols[3].split(",")[1] in ("CG", "CHG", "CHH"):
             return InputKind.BEDMETHYL
         # beta matrix CSV: comma-separated, a data row whose first token is a
         # cg/ch probe id (header row like "probe,S1" is skipped).
