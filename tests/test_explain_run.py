@@ -227,7 +227,11 @@ def test_openai_compat_overlays_backend_specific_request_options(
                     "choices": [
                         {
                             "finish_reason": "stop",
-                            "message": {"content": "ok [BRCA2]"},
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "ok [BRCA2]"}
+                                ]
+                            },
                         }
                     ]
                 }
@@ -289,6 +293,30 @@ def test_openai_compat_overlays_backend_specific_request_options(
             "backend returned empty draft content",
         ),
         ({"choices": []}, "backend returned no choices"),
+        (
+            {
+                "choices": [
+                    {"finish_reason": [], "message": {"content": GOOD}}
+                ]
+            },
+            "backend returned a malformed finish reason",
+        ),
+        (
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": [
+                                {"type": "reasoning", "text": GOOD},
+                                {"type": "refusal", "text": GOOD},
+                            ]
+                        },
+                    }
+                ]
+            },
+            "backend returned empty draft content",
+        ),
     ],
 )
 def test_openai_compat_rejects_incomplete_response_shapes(

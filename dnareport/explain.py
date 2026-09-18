@@ -266,6 +266,8 @@ class OpenAICompat:
             raise DraftResponseError("backend returned a malformed choice")
 
         finish_reason = choice.get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise DraftResponseError("backend returned a malformed finish reason")
         if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
             raise DraftResponseError(
                 f"backend truncated the draft (finish_reason={finish_reason})"
@@ -285,7 +287,11 @@ class OpenAICompat:
             text = "".join(
                 part.get("text", "")
                 for part in content
-                if isinstance(part, dict) and isinstance(part.get("text"), str)
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") in {"text", "output_text"}
+                    and isinstance(part.get("text"), str)
+                )
             ).strip()
         else:
             text = ""
