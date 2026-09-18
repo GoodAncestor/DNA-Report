@@ -199,6 +199,10 @@ class Backend(Protocol):
     def draft(self, system: str, user: str, *, timeout: float) -> str: ...
 
 
+class DraftResponseError(RuntimeError):
+    """The backend answered, but did not return a complete usable draft."""
+
+
 class OpenAICompat:
     def __init__(self, base_url: str, model: str, key_file: str | None):
         self.base_url = base_url.rstrip("/")
@@ -213,18 +217,92 @@ class OpenAICompat:
             raise PermissionError("The deeper-dive key file must use mode 0600.")
         return path.read_text().strip()
 
+    @staticmethod
+    def _request_options() -> dict:
+        """Return operator-configured OpenAI-compatible request fields.
+
+        Compatible servers expose different generation controls.  The JSON
+        overlay lets an operator select the fields that their configured server
+        accepts without coupling those controls to model selection.  A null
+        value removes one of the two conservative defaults.
+        """
+        options = {"temperature": 0.2, "max_tokens": 1500}
+        configured = os.environ.get("DNAREPORT_EXPLAIN_REQUEST_OPTIONS", "")
+        if not configured:
+            return options
+        try:
+            overlay = json.loads(configured)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                "DNAREPORT_EXPLAIN_REQUEST_OPTIONS must be a JSON object"
+            ) from error
+        if not isinstance(overlay, dict):
+            raise ValueError(
+                "DNAREPORT_EXPLAIN_REQUEST_OPTIONS must be a JSON object"
+            )
+        protected = {"model", "messages", "stream"}.intersection(overlay)
+        if protected:
+            fields = ", ".join(sorted(protected))
+            raise ValueError(
+                f"DNAREPORT_EXPLAIN_REQUEST_OPTIONS cannot set {fields}"
+            )
+        for field, value in overlay.items():
+            if value is None:
+                options.pop(field, None)
+            else:
+                options[field] = value
+        return options
+
+    @staticmethod
+    def _content(document: object) -> str:
+        """Extract one complete chat-completion message or reject its shape."""
+        if not isinstance(document, dict):
+            raise DraftResponseError("backend returned a malformed response")
+        choices = document.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise DraftResponseError("backend returned no choices")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise DraftResponseError("backend returned a malformed choice")
+
+        finish_reason = choice.get("finish_reason")
+        if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
+            raise DraftResponseError(
+                f"backend truncated the draft (finish_reason={finish_reason})"
+            )
+        if finish_reason not in {None, "stop"}:
+            raise DraftResponseError(
+                f"backend did not complete the draft (finish_reason={finish_reason})"
+            )
+
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            raise DraftResponseError("backend returned no message")
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content.strip()
+        elif isinstance(content, list):
+            text = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            ).strip()
+        else:
+            text = ""
+        if not text:
+            raise DraftResponseError("backend returned empty draft content")
+        return text
+
     def draft(self, system: str, user: str, *, timeout: float) -> str:
-        body = json.dumps(
-            {
-                "model": self.model,
-                "temperature": 0.2,
-                "max_tokens": 1500,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            }
-        ).encode()
+        request_body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            **self._request_options(),
+        }
+        body = json.dumps(request_body).encode()
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=body,
@@ -235,7 +313,7 @@ class OpenAICompat:
             request.add_header("Authorization", f"Bearer {key}")
         with urllib.request.urlopen(request, timeout=timeout) as response:
             document = json.loads(response.read())
-        return document["choices"][0]["message"]["content"]
+        return self._content(document)
 
 
 class _Cli:
@@ -410,6 +488,14 @@ def explain_promoted(
         try:
             text = backend.draft(system, user, timeout=call_timeout)
             text = extract_dive(text)
+        except DraftResponseError as error:
+            outcome["rejected"] += 1
+            finding.deeper_dive_meta = {
+                "rejected_reason": str(error),
+                "backend": name,
+                "model": model,
+            }
+            continue
         except Exception as error:
             outcome["rejected"] += 1
             finding.deeper_dive_meta = {

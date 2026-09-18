@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -212,6 +213,131 @@ def test_openai_compat_posts_chat_completion(monkeypatch, tmp_path):
     assert seen["body"]["messages"][1]["content"] == "usr"
     assert seen["body"]["temperature"] == 0.2
     assert seen["body"]["max_tokens"] >= 300
+
+
+def test_openai_compat_overlays_backend_specific_request_options(
+    monkeypatch, tmp_path
+):
+    seen = {}
+
+    class Response:
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": "ok [BRCA2]"},
+                        }
+                    ]
+                }
+            ).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        seen["body"] = json.loads(request.data)
+        return Response()
+
+    monkeypatch.setattr(explain.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv(
+        "DNAREPORT_EXPLAIN_REQUEST_OPTIONS",
+        json.dumps(
+            {
+                "temperature": None,
+                "max_tokens": 3200,
+                "reasoning_effort": "none",
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+        ),
+    )
+    backend = explain.OpenAICompat("http://h:8000/v1", "model", None)
+
+    assert backend.draft("sys", "usr", timeout=5) == "ok [BRCA2]"
+    assert seen["body"]["max_tokens"] == 3200
+    assert "temperature" not in seen["body"]
+    assert seen["body"]["reasoning_effort"] == "none"
+    assert seen["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert seen["body"]["model"] == "model"
+    assert seen["body"]["messages"][0]["content"] == "sys"
+
+
+@pytest.mark.parametrize(
+    ("document", "reason"),
+    [
+        (
+            {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": GOOD},
+                    }
+                ]
+            },
+            "backend truncated the draft (finish_reason=length)",
+        ),
+        (
+            {
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": ""}}
+                ]
+            },
+            "backend returned empty draft content",
+        ),
+        ({"choices": []}, "backend returned no choices"),
+    ],
+)
+def test_openai_compat_rejects_incomplete_response_shapes(
+    monkeypatch, document, reason
+):
+    class Response:
+        def read(self):
+            return json.dumps(document).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        explain.urllib.request, "urlopen", lambda request, timeout: Response()
+    )
+    backend = explain.OpenAICompat("http://h:8000/v1", "model", None)
+
+    with pytest.raises(explain.DraftResponseError, match=re.escape(reason)):
+        backend.draft("sys", "usr", timeout=5)
+
+
+def test_truncated_response_is_explicitly_rejected_and_not_cached(
+    env, monkeypatch
+):
+    class Truncated:
+        def draft(self, system, user, *, timeout):
+            raise explain.DraftResponseError(
+                "backend truncated the draft (finish_reason=length)"
+            )
+
+    backend = Truncated()
+    monkeypatch.setattr(
+        explain,
+        "select_backend",
+        lambda job_backend=None: ("openai_compat", "fake-model", backend),
+    )
+    result = _result()
+
+    outcome = explain.explain_promoted(result)
+
+    assert outcome["rejected"] == 1
+    assert result.read_first[0].deeper_dive is None
+    assert result.read_first[0].deeper_dive_meta["rejected_reason"] == (
+        "backend truncated the draft (finish_reason=length)"
+    )
+    assert explain.explain_promoted(_result())["cached"] == 0
 
 
 def test_openai_compat_refuses_a_group_readable_key_file(tmp_path):
