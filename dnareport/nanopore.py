@@ -52,6 +52,9 @@ class NanoporeConfig:
     min_variant_coverage: int = 8
     min_genotype_quality: int = 20
     mod_probability: float = 0.8
+    # Local validation harness only: retain complete scratch, including failures.
+    # Deliberately absent from from_env/web inputs; normal runs still clean up.
+    validation_dir: str | None = None
 
     @classmethod
     def from_env(cls):
@@ -94,6 +97,37 @@ class PreparedNanopore:
     provenance: dict
     notes: list[str] = field(default_factory=list)
     artifacts_path: str | None = None
+    raw_vcf_path: str | None = None
+    validation_path: str | None = None
+
+
+@contextlib.contextmanager
+def _workspace(config):
+    if config.validation_dir is None:
+        with tempfile.TemporaryDirectory(prefix="dnareport-ont-", dir=config.scratch_dir) as directory:
+            yield directory
+        return
+    root = Path(config.validation_dir).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory = Path(tempfile.mkdtemp(prefix="validation-", dir=root))
+    status = {"state": "running", "scope": "local native preparation and consumer context",
+              "started_unix": time.time(), "accuracy_established": False}
+    marker = directory / "validation-status.json"
+    marker.write_text(json.dumps(status, indent=2) + "\n")
+    marker.chmod(0o600)
+    try:
+        yield str(directory)
+    except BaseException as exc:
+        status.update(state="failed", exception_type=type(exc).__name__)
+        raise
+    else:
+        status["state"] = "completed"
+    finally:
+        status["finished_unix"] = time.time()
+        status["files"] = {str(p.relative_to(directory)): {"bytes": p.stat().st_size,
+                            "sha256": sha256(p)} for p in sorted(directory.rglob("*"))
+                           if p.is_file() and p != marker}
+        marker.write_text(json.dumps(status, indent=2) + "\n")
 
 
 def sha256(path) -> str:
@@ -352,7 +386,9 @@ def _coverage(path: Path, contig_lengths: dict[str, int]) -> dict:
 @contextlib.contextmanager
 def prepare_nanopore(path: str, *, config: NanoporeConfig | None = None,
                       sample_id: str | None = None, vcf_path: str | None = None):
-    """Yield ephemeral, reference-checked outputs; all scratch is deleted on exit.
+    """Yield reference-checked outputs; normally all scratch is deleted on exit.
+
+    An explicit local validation_dir retains scratch and failed-run evidence.
 
     A supplied VCF is a local advanced workflow: matching declared IDs and REF
     alleles are checked, but cannot prove that two independently supplied files
@@ -370,7 +406,7 @@ def prepare_nanopore(path: str, *, config: NanoporeConfig | None = None,
              "Only explicit PASS, depth-qualified small variants are interpreted; model compatibility requires a separate control-sample validation. Dorado/Clair3 model hashes record identity, not accuracy.",
              "Nanopore 5mC fractions are sequencing measurements; array-trained clock calibration is not established by this integration."]
     deadline = time.monotonic() + config.timeout_seconds
-    with tempfile.TemporaryDirectory(prefix="dnareport-ont-", dir=config.scratch_dir) as directory:
+    with _workspace(config) as directory:
         work = Path(directory)
         with pysam.FastaFile(config.reference_fasta) as fasta:
             contigs = [c for c in fasta.references if re.fullmatch(r"(?:chr)?(?:[1-9]|1[0-9]|2[0-2])", c)]
@@ -378,8 +414,23 @@ def prepare_nanopore(path: str, *, config: NanoporeConfig | None = None,
                 raise NanoporeConfigurationError("Reference contains no named human autosomes (1–22 or chr1–chr22).")
             if len(contigs) != 22:
                 notes.append(f"The configured reference contains {len(contigs)} autosomes; this is not a complete whole-genome assessment.")
-            run = lambda args, stage, stdout=None: _run(args, stage=stage, config=config,
-                work=work, deadline=deadline, stdout=stdout)
+            def run(args, stage, stdout=None):
+                record = {"stage": stage, "argv": args, "started_unix": time.time(),
+                          "stdout": str(stdout) if stdout else None}
+                try:
+                    result = _run(args, stage=stage, config=config, work=work,
+                                  deadline=deadline, stdout=stdout)
+                except BaseException as exc:
+                    record.update(state="failed", exception_type=type(exc).__name__)
+                    raise
+                else:
+                    record["state"] = "completed"
+                    return result
+                finally:
+                    if config.validation_dir is not None:
+                        record["finished_unix"] = time.time()
+                        with (work / "commands.jsonl").open("a") as log:
+                            log.write(json.dumps(record) + "\n")
             tool_versions = {}
             def capture_version(tool):
                 if tool in tool_versions:
@@ -426,6 +477,10 @@ def prepare_nanopore(path: str, *, config: NanoporeConfig | None = None,
             if before["primary_reads"] != after["primary_reads"] or before["reads_with_mod_tags"] != after["reads_with_mod_tags"]:
                 raise NanoporeError("Read or modification counts changed during preparation; refusing mismatched streams.")
             called = Path(vcf_path).resolve() if vcf_path else work / "clair3" / "merge_output.vcf.gz"
+            if vcf_path and config.validation_dir is not None:
+                retained = work / ("supplied.raw.vcf.gz" if called.suffix == ".gz" else "supplied.raw.vcf")
+                shutil.copyfile(called, retained)
+                called = retained
             if not vcf_path:
                 run([tools["clair3"], f"--bam_fn={sorted_bam}", f"--ref_fn={Path(config.reference_fasta).resolve()}",
                      f"--threads={config.threads}", "--platform=ont", f"--model_path={Path(config.clair3_model_path).resolve()}",
@@ -471,7 +526,10 @@ def prepare_nanopore(path: str, *, config: NanoporeConfig | None = None,
                 versions = [str(r).strip() for r in vcf.header.records if r.key == "clair3_version"]
             provenance["tools"]["clair3"] = versions or ["version not present in VCF"]
             artifacts = _archive(config.artifact_dir, sample_id, passing, bed, provenance, notes) if config.artifact_dir else None
-            yield PreparedNanopore(str(sorted_bam), str(passing), str(bed), sample_id, provenance, notes, artifacts)
+            if config.validation_dir is not None:
+                (work / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+            yield PreparedNanopore(str(sorted_bam), str(passing), str(bed), sample_id, provenance, notes, artifacts,
+                                   str(called), str(work) if config.validation_dir is not None else None)
 
 
 def _archive(root: str, sample_id: str, vcf: Path, bed: Path, provenance: dict, notes: list) -> str:

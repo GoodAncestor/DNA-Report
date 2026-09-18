@@ -1,0 +1,23 @@
+{
+  "accuracy_metrics": null,
+  "counts": {
+    "benchmark_retained_records": 4454479,
+    "excluded_mixed_scope_genotype": 43,
+    "excluded_non_autosomal": 168028,
+    "excluded_quality": 1039236,
+    "excluded_unsupported_alleles": 194,
+    "input_records": 5661980,
+    "report_retained_records": 4454522,
+    "report_supported_carried_alleles": 4487526,
+    "unsupported_carried_alleles": 247
+  },
+  "input_sha256": "ff50273158eb1cde37f826a9c273765ef5d1205661f9f095bcfe43e48fd70a02",
+  "output_sha256": "e3459d40076c6765b6a2990a82ed88e9911fe6b07eda2c3ccdf689cdde91f7f0",
+  "scope": "Autosomal PASS complete diploid carried small genotypes; mixed-scope records excluded in full",
+  "status": "filtering_only_accuracy_pending",
+  "thresholds": {
+    "max_allele_length": 50,
+    "min_dp": 10,
+    "min_gq": 20
+  }
+}
