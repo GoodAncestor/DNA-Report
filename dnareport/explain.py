@@ -22,6 +22,7 @@ from typing import Protocol
 
 
 PROMPT_VERSION = "2"
+RESPONSE_CONTRACT_VERSION = "2"
 
 _ZYGOSITY_CLASS = {
     "het": "one altered copy",
@@ -96,6 +97,7 @@ def cache_key(facts: dict, backend: str, model: str) -> str:
     raw = json.dumps(
         {
             "v": PROMPT_VERSION,
+            "response_contract": RESPONSE_CONTRACT_VERSION,
             "backend": backend,
             "model": model,
             "facts": stable,

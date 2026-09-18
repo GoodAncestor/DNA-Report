@@ -10,6 +10,8 @@ the response contract. A reply with `finish_reason: length` is rejected even if
 its partial `content` would pass the citation and wording checks. Empty content,
 missing choices, malformed choices, and other non-completing finish reasons also
 produce explicit refusal reasons and are never cached as explanations.
+The cache key now includes response-contract version 2, so entries accepted
+before these completion checks cannot bypass them after upgrade.
 
 Request settings are configurable through
 `DNAREPORT_EXPLAIN_REQUEST_OPTIONS`, a JSON object overlaid on the existing

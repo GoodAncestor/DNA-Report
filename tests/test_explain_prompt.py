@@ -2,6 +2,7 @@ import json
 
 from biocore.providers.base import Category, ChainLink, Finding, Interpretation, Tier
 
+from dnareport import explain
 from dnareport.explain import PROMPT_VERSION, build_prompt, cache_key, facts_for
 
 
@@ -76,6 +77,15 @@ def test_cache_key_ignores_genotype_and_tracks_prompt_version():
     d = cache_key(facts_for(_f()), "codex_cli", "gpt-5.6-sol")
     assert a == b and a != c and a != d and len(a) == 64
     assert PROMPT_VERSION in json.dumps(build_prompt(facts_for(_f())))
+
+
+def test_cache_key_tracks_the_response_contract(monkeypatch):
+    facts = facts_for(_f())
+    current = cache_key(facts, "openai_compat", "model")
+
+    monkeypatch.setattr(explain, "RESPONSE_CONTRACT_VERSION", "previous")
+
+    assert cache_key(facts, "openai_compat", "model") != current
 
 
 def test_prompt_is_facts_locked_and_plain():
