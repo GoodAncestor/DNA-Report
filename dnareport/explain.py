@@ -273,9 +273,7 @@ class OpenAICompat:
                 f"backend truncated the draft (finish_reason={finish_reason})"
             )
         if finish_reason not in {None, "stop"}:
-            raise DraftResponseError(
-                f"backend did not complete the draft (finish_reason={finish_reason})"
-            )
+            raise DraftResponseError("backend did not complete the draft")
 
         message = choice.get("message")
         if not isinstance(message, dict):

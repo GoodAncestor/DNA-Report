@@ -317,6 +317,17 @@ def test_openai_compat_overlays_backend_specific_request_options(
             },
             "backend returned empty draft content",
         ),
+        (
+            {
+                "choices": [
+                    {
+                        "finish_reason": "provider supplied prose",
+                        "message": {"content": GOOD},
+                    }
+                ]
+            },
+            "backend did not complete the draft",
+        ),
     ],
 )
 def test_openai_compat_rejects_incomplete_response_shapes(
