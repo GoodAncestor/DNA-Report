@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "sample": "HG002",
+  "build": "GRCh38",
+  "truth_release": "REPLACE_WITH_REVIEWED_RELEASE",
+  "truth_sample": "HG002",
+  "query_sample": "SAMPLE",
+  "happy_version": "REPLACE_WITH_INSTALLED_VERSION",
+  "reference_compatibility_evidence": "REPLACE_WITH_RELEASE_REFERENCE_CHECK",
+  "acceptance": {
+    "purpose": "Research software benchmark; no clinical acceptance",
+    "minimum_precision": null,
+    "minimum_recall": null,
+    "note": "Prespecify numerical limits before inspecting results; null means no pass claim."
+  },
+  "files": {
+    "truth_vcf": {
+      "path": "REPLACE_truth_vcf",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "confident_bed": {
+      "path": "REPLACE_confident_bed",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "regions_bed": {
+      "path": "REPLACE_regions_bed",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "reference_fasta": {
+      "path": "REPLACE_reference_fasta",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "reference_fai": {
+      "path": "REPLACE_reference_fai",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "raw_query": {
+      "path": "REPLACE_raw_query",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "filtered_query": {
+      "path": "REPLACE_filtered_query",
+      "sha256": "REPLACE_WITH_SHA256"
+    }
+  },
+  "stratifications": {
+    "homopolymers": {
+      "path": "REPLACE_homopolymers.bed",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "tandem_repeats": {
+      "path": "REPLACE_tandem_repeats.bed",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    "difficult_regions": {
+      "path": "REPLACE_difficult_regions.bed",
+      "sha256": "REPLACE_WITH_SHA256"
+    }
+  }
+}
