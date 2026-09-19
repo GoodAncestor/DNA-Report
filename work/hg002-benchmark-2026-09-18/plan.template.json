@@ -56,5 +56,6 @@
       "path": "REPLACE_difficult_regions.bed",
       "sha256": "REPLACE_WITH_SHA256"
     }
-  }
+  },
+  "evidence_kind": "independent_truth"
 }

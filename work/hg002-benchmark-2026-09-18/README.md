@@ -52,3 +52,9 @@ Before a native pilot: verify the exact CRAM decode reference, mod-tag availabil
 ## Acceptance boundaries
 
 Software acceptance: complete input/exclusion accounting, immutable input checks, failure retention, real subprocess wiring under fictional fixtures, correct denominator arithmetic and unchanged ordinary cleanup. Scientific acceptance: pending independent truth/reference/runtime and reviewer-selected limits. Native and orthogonal methylation accuracy remain pending. No clinical or donor-health interpretation is supported by this cell-line software exercise.
+
+## Independent review follow-up
+
+Independent review reproduced a receipt-path collision that could overwrite the filter source and a self-comparison plan that could label the query as truth. Both are fixed: source/output/index/receipt collisions and existing destinations are rejected before writes; independent-truth plans reject identical files or bytes. Tests must explicitly declare `synthetic_fixture`, retained in the run receipt. Forty-one focused tests passed after these guards, including all five new regressions. The earlier full suite passed410 tests with2 environment skips.
+
+Hash and header/sample checks do not by themselves prove VCF REF alleles agree with the FASTA or that a release is biologically independent. Reviewed release-specific reference/sequence compatibility remains an execution prerequisite before real scoring. No current result is labelled independent accuracy.
