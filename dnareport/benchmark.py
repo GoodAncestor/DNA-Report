@@ -29,6 +29,20 @@ def dump(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
 
 
+def filter_destinations(source, output, receipt=None):
+    """Reject every collision before touching either VCF or receipt output."""
+    source = Path(source).resolve()
+    destinations = [Path(output)]
+    if str(output).endswith(".gz"):
+        destinations.append(Path(str(output) + ".tbi"))
+    if receipt is not None:
+        destinations.append(Path(receipt))
+    resolved = [p.resolve() for p in destinations]
+    if (source in resolved or len(set(resolved)) != len(resolved)
+            or any(p.exists() or p.is_symlink() for p in destinations)):
+        raise ValueError("Every output/index/receipt must be a distinct new file, separate from the source")
+
+
 def filter_publisher(source, output, *, min_dp=10, min_gq=20):
     """Retain complete report-eligible genotypes, preserving original VCF fields.
 
@@ -39,9 +53,8 @@ def filter_publisher(source, output, *, min_dp=10, min_gq=20):
     import pysam
     if min_dp < 1 or min_gq < 0:
         raise ValueError("Invalid prespecified filter thresholds")
+    filter_destinations(source, output)
     source, output = Path(source).resolve(), Path(output).resolve()
-    if source == output or output.exists():
-        raise ValueError("Output must be a new file distinct from the source")
     counts = Counter()
     with pysam.VariantFile(str(source)) as vf:
         if list(vf.header.samples) != ["SAMPLE"] or f"##reference={REFERENCE}\n" not in str(vf.header):
@@ -177,6 +190,14 @@ def validate_plan(plan_path):
     assessed = intersection_bases(mask, regions)
     if not assessed:
         raise ValueError("Evaluation regions have no confident reference bases")
+    evidence_kind = plan.get("evidence_kind", "independent_truth")
+    if evidence_kind not in {"independent_truth", "synthetic_fixture"}:
+        raise ValueError("Unknown benchmark evidence kind")
+    if evidence_kind == "independent_truth":
+        for key in ("raw_query", "filtered_query"):
+            if (files["truth_vcf"].samefile(files[key])
+                    or plan["files"]["truth_vcf"]["sha256"] == plan["files"][key]["sha256"]):
+                raise ValueError("Independent truth cannot be the query file or identical bytes")
     import pysam
     for name, sample in (("truth_vcf", plan.get("truth_sample")),
                          ("raw_query", plan.get("query_sample")),
@@ -214,7 +235,8 @@ def score(plan_path, output_dir, *, executable="hap.py", timeout=3600, threads=2
     record = {"state": "running", "started_unix": time.time(), "denominators": denominators,
               "plan_sha256": sha256(plan_path), "tool_version": actual_version,
               "tool_executable_sha256": sha256(tool), "commands": [], "clinical_validity": False,
-              "benchmark_pass": None, "acceptance": plan["acceptance"], "summary_metrics": {}}
+              "benchmark_pass": None, "acceptance": plan["acceptance"], "summary_metrics": {},
+              "evidence_kind": plan.get("evidence_kind", "independent_truth")}
     dump(destination / "run.json", record)
     stratification = destination / "stratification.tsv"
     stratification.write_text("".join(name + "\t" + str(files["stratum_" + name]) + "\n"
@@ -339,6 +361,7 @@ def main():
     run.add_argument("plan"); run.add_argument("output"); run.add_argument("--happy", default="hap.py")
     args = parser.parse_args()
     if args.command == "filter":
+        filter_destinations(args.source, args.output, args.receipt)
         dump(args.receipt, filter_publisher(args.source, args.output))
     elif args.command == "preflight":
         print(json.dumps(validate_plan(args.plan)[2], indent=2))

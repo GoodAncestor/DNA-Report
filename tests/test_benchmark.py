@@ -133,7 +133,7 @@ def make_plan(tmp_path):
     files = dict(truth_vcf=source, raw_query=source, filtered_query=source,
                  reference_fasta=reference, reference_fai=Path(str(reference)+".fai"),
                  confident_bed=mask, regions_bed=regions)
-    plan = dict(schema=1, sample="HG002", build="GRCh38", truth_release="SYNTHETIC-NOT-TRUTH",
+    plan = dict(schema=1, sample="HG002", build="GRCh38", evidence_kind="synthetic_fixture", truth_release="SYNTHETIC-NOT-TRUTH",
                 truth_sample="SAMPLE", query_sample="SAMPLE", happy_version="0.0.fixture",
                 reference_compatibility_evidence="Fictional all-A control only",
                 acceptance={"purpose":"Fictional harness validation", "minimum_precision":None},
@@ -179,3 +179,24 @@ p.with_suffix('.extended.csv').write_text('FICTIONAL SUBPROCESS CONTRACT ONLY\\n
     failed=json.loads((tmp_path/"failure/run.json").read_text())
     assert failed["state"] == "failed"
     assert 'synthetic failure' in (tmp_path/"failure/raw.log").read_text()
+
+
+@pytest.mark.parametrize('receipt_name', ['raw.vcf','output.vcf.gz','output.vcf.gz.tbi','existing.json'])
+def test_cli_receipt_collision_never_mutates_source(tmp_path, monkeypatch, receipt_name):
+    source=tmp_path/'raw.vcf';publisher_vcf(source)
+    original=source.read_bytes()
+    existing=tmp_path/'existing.json';existing.write_text('existing evidence')
+    output=tmp_path/'output.vcf.gz'
+    monkeypatch.setattr(sys,'argv',['benchmark','filter',str(source),str(output),'--receipt',str(tmp_path/receipt_name)])
+    with pytest.raises(ValueError,match='distinct new file'):
+        b.main()
+    assert source.read_bytes()==original
+    assert not output.exists()
+    assert existing.read_text()=='existing evidence'
+
+
+def test_independent_plan_rejects_self_comparison(tmp_path):
+    path=make_plan(tmp_path)
+    plan=json.loads(path.read_text());plan['evidence_kind']='independent_truth';b.dump(path,plan)
+    with pytest.raises(ValueError,match='Independent truth'):
+        b.validate_plan(path)
