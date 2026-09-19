@@ -135,6 +135,7 @@ def make_plan(tmp_path):
                  confident_bed=mask, regions_bed=regions)
     plan = dict(schema=1, sample="HG002", build="GRCh38", evidence_kind="synthetic_fixture", truth_release="SYNTHETIC-NOT-TRUTH",
                 truth_sample="SAMPLE", query_sample="SAMPLE", happy_version="0.0.fixture",
+                comparison_engine="vcfeval", gender="male",
                 reference_compatibility_evidence="Fictional all-A control only",
                 acceptance={"purpose":"Fictional harness validation", "minimum_precision":None},
                 files={k:{"path":str(p),"sha256":b.sha256(p)} for k,p in files.items()},
@@ -172,6 +173,8 @@ p.with_suffix('.extended.csv').write_text('FICTIONAL SUBPROCESS CONTRACT ONLY\\n
     assert record["benchmark_pass"] is None
     assert len(record["commands"]) == 2
     assert all('--stratification' in argv for argv in record["commands"])
+    assert all(argv[argv.index('--engine')+1] == 'vcfeval' for argv in record['commands'])
+    assert all(argv[argv.index('--gender')+1] == 'male' for argv in record['commands'])
     tool.write_text(f"#!{sys.executable}\nimport sys\nif '--version' in sys.argv: print('hap.py 0.0.fixture')\nelse: print('synthetic failure');sys.exit(7)\n")
     import subprocess
     with pytest.raises(subprocess.CalledProcessError):
@@ -199,4 +202,12 @@ def test_independent_plan_rejects_self_comparison(tmp_path):
     path=make_plan(tmp_path)
     plan=json.loads(path.read_text());plan['evidence_kind']='independent_truth';b.dump(path,plan)
     with pytest.raises(ValueError,match='Independent truth'):
+        b.validate_plan(path)
+
+
+@pytest.mark.parametrize('field,value', [('comparison_engine', None), ('comparison_engine', 'unknown'), ('gender', None), ('gender', 'female')])
+def test_plan_requires_explicit_supported_comparison_settings(tmp_path, field, value):
+    path=make_plan(tmp_path)
+    plan=json.loads(path.read_text());plan[field]=value;b.dump(path,plan)
+    with pytest.raises(ValueError,match='Prespecify'):
         b.validate_plan(path)

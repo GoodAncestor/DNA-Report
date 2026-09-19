@@ -57,5 +57,7 @@
       "sha256": "REPLACE_WITH_SHA256"
     }
   },
-  "evidence_kind": "independent_truth"
+  "evidence_kind": "independent_truth",
+  "comparison_engine": "vcfeval",
+  "gender": "male"
 }
