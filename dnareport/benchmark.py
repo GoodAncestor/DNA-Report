@@ -157,6 +157,10 @@ def validate_plan(plan_path):
         raise ValueError("Record truth release and reviewed reference compatibility evidence")
     if not isinstance(plan.get("acceptance"), dict) or not plan["acceptance"].get("purpose"):
         raise ValueError("Prespecify acceptance purpose and limits (null means no pass claim)")
+    if plan.get("comparison_engine") not in {"xcmp", "vcfeval"}:
+        raise ValueError("Prespecify comparison_engine as xcmp or vcfeval")
+    if plan.get("gender") != "male":
+        raise ValueError("Prespecify male ploidy for HG002")
     files = {}
     for key in ("truth_vcf", "confident_bed", "regions_bed", "reference_fasta", "reference_fai", "raw_query", "filtered_query"):
         item = plan["files"][key]
@@ -247,7 +251,8 @@ def score(plan_path, output_dir, *, executable="hap.py", timeout=3600, threads=2
             argv = [tool, str(files["truth_vcf"]), str(files[label + "_query"]),
                     "-f", str(files["confident_bed"]), "-T", str(files["regions_bed"]),
                     "-r", str(files["reference_fasta"]), "-o", str(destination / label),
-                    "--threads", str(threads), "--engine", "xcmp",
+                    "--threads", str(threads), "--engine", plan["comparison_engine"],
+                    "--gender", plan["gender"],
                     "--stratification", str(stratification)]
             record["commands"].append(argv)
             dump(destination / "run.json", record)
