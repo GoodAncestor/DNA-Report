@@ -193,10 +193,54 @@ def check_draft(text: str, facts: dict) -> str | None:
     return None
 
 
+class EmptyDraftError(RuntimeError):
+    """A backend answered with no visible text.
+
+    On a thinking model the deliberation is billed against ``max_tokens``, so a
+    budget that fits the answer alone comes back with ``content: ""`` and the
+    whole reply in ``reasoning_content``. That is a failed call, not a short
+    explanation: it is raised here so the finding records a backend error
+    instead of silently carrying a blank deeper dive.
+    """
+
+
 class Backend(Protocol):
     """The common interface for deeper-dive drafting backends."""
 
     def draft(self, system: str, user: str, *, timeout: float) -> str: ...
+
+
+DEFAULT_MAX_TOKENS = 4000
+
+
+def reasoning_off_body() -> dict:
+    """The documented switches that turn a thinking model's deliberation off.
+
+    vLLM honours ``chat_template_kwargs.enable_thinking=false`` and LiteLLM
+    forwards the key unchanged; measured 2026-09-13 on the alien trio
+    (``qwen3.8-27b``: 1500 tokens of thought and an empty answer becomes
+    132-423 tokens and a passing draft) and on the gx10 quad
+    (``glm-5.3-int4mix``: 143 s becomes 14 s). GLM-5.3 also reads
+    ``reasoning_effort`` (low/high/max; Z.ai's guidance is to use ``low``
+    where disabling used to be possible), so it is sent when
+    ``DNAREPORT_EXPLAIN_REASONING_EFFORT`` names one. ai-silo's ds4 and the
+    oMLX studios honour neither switch, which is why ``max_tokens`` has to be
+    large enough on its own.
+    """
+    body: dict = {"chat_template_kwargs": {"enable_thinking": False}}
+    effort = os.environ.get("DNAREPORT_EXPLAIN_REASONING_EFFORT", "").strip()
+    if effort:
+        body["reasoning_effort"] = effort
+    return body
+
+
+def _max_tokens() -> int:
+    """The completion budget, sized to hold deliberation plus a 180-word answer."""
+    try:
+        wanted = int(os.environ.get("DNAREPORT_EXPLAIN_MAX_TOKENS", ""))
+    except ValueError:
+        wanted = DEFAULT_MAX_TOKENS
+    return max(wanted, 600)
 
 
 class OpenAICompat:
@@ -213,29 +257,60 @@ class OpenAICompat:
             raise PermissionError("The deeper-dive key file must use mode 0600.")
         return path.read_text().strip()
 
-    def draft(self, system: str, user: str, *, timeout: float) -> str:
-        body = json.dumps(
-            {
-                "model": self.model,
-                "temperature": 0.2,
-                "max_tokens": 1500,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            }
-        ).encode()
+    def _post(self, body: dict, timeout: float) -> dict:
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
-            data=body,
+            data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
         key = self._key()
         if key:
             request.add_header("Authorization", f"Bearer {key}")
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            document = json.loads(response.read())
-        return document["choices"][0]["message"]["content"]
+            return json.loads(response.read())
+
+    @staticmethod
+    def _read(document: dict) -> tuple[str, str, int]:
+        """Return the visible text, the finish reason, and the thought length."""
+        choice = ((document or {}).get("choices") or [{}])[0] or {}
+        message = choice.get("message") or {}
+        content = (message.get("content") or "").strip()
+        thought = message.get("reasoning_content") or message.get("reasoning") or ""
+        return content, str(choice.get("finish_reason") or ""), len(thought)
+
+    def draft(self, system: str, user: str, *, timeout: float) -> str:
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        budget = _max_tokens()
+        body = {
+            "model": self.model,
+            "temperature": 0.2,
+            "max_tokens": budget,
+            "messages": messages,
+        }
+        if os.environ.get("DNAREPORT_EXPLAIN_THINKING", "0") != "1":
+            body.update(reasoning_off_body())
+
+        content, finish, thought = self._read(self._post(body, timeout))
+        if content:
+            return content
+
+        # One retry: deliberation off for the engines that read the switch, and
+        # a doubled budget for the engines that ignore it (ai-silo needed 4000
+        # to finish a thought and still answer, measured 2026-09-13).
+        retry = dict(body, max_tokens=max(budget * 2, DEFAULT_MAX_TOKENS))
+        retry.update(reasoning_off_body())
+        content, finish, thought = self._read(self._post(retry, timeout))
+        if content:
+            return content
+        raise EmptyDraftError(
+            f"{self.model} returned empty content twice "
+            f"(finish_reason={finish or 'unset'}, {thought} characters of "
+            f"reasoning, max_tokens={retry['max_tokens']}); "
+            "the model's deliberation cannot be switched off at this endpoint."
+        )
 
 
 class _Cli:
@@ -258,7 +333,10 @@ class _Cli:
             raise RuntimeError(
                 f"{self.argv[0]} exit {process.returncode}: {process.stderr[-200:]}"
             )
-        return process.stdout.strip()
+        text = process.stdout.strip()
+        if not text:
+            raise EmptyDraftError(f"{self.argv[0]} wrote nothing to stdout.")
+        return text
 
 
 class CodexCli(_Cli):
@@ -410,6 +488,10 @@ def explain_promoted(
         try:
             text = backend.draft(system, user, timeout=call_timeout)
             text = extract_dive(text)
+            if not text.strip():
+                raise EmptyDraftError(
+                    f"{model} wrote nothing between the <dive> markers."
+                )
         except Exception as error:
             outcome["rejected"] += 1
             finding.deeper_dive_meta = {
