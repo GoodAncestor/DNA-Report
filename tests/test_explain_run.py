@@ -294,3 +294,143 @@ def test_disabled_explanation_gate_never_calls_in_process_stub(
         "skipped": 0,
     }
     assert stub.requests == []
+
+
+class _Replies:
+    """An OpenAI-compatible endpoint that replays a scripted list of messages."""
+
+    def __init__(self, *messages):
+        self.messages = list(messages)
+        self.bodies = []
+
+    def __call__(self, request, timeout):
+        self.bodies.append(json.loads(request.data))
+        message = self.messages[min(len(self.bodies), len(self.messages)) - 1]
+        document = {"choices": [{"message": message, "finish_reason": "length"}]}
+
+        class Response:
+            def read(self):
+                return json.dumps(document).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        return Response()
+
+
+def _backend():
+    return explain.OpenAICompat("http://h:8000/v1", "qwen3.8-27b", None)
+
+
+def test_request_disables_reasoning_and_budgets_for_a_full_answer(monkeypatch):
+    """Both levers ride on the first call: the documented thinking-off switch
+    and a budget that holds an answer even where the switch is ignored."""
+    endpoint = _Replies({"content": "ok [BRCA2]"})
+    monkeypatch.setattr(explain.urllib.request, "urlopen", endpoint)
+    monkeypatch.delenv("DNAREPORT_EXPLAIN_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("DNAREPORT_EXPLAIN_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("DNAREPORT_EXPLAIN_THINKING", raising=False)
+
+    assert _backend().draft("sys", "usr", timeout=5) == "ok [BRCA2]"
+
+    body = endpoint.bodies[0]
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert body["max_tokens"] == explain.DEFAULT_MAX_TOKENS == 4000
+    assert "reasoning_effort" not in body
+    assert len(endpoint.bodies) == 1
+
+
+def test_reasoning_effort_is_sent_when_the_model_takes_one(monkeypatch):
+    endpoint = _Replies({"content": "ok [BRCA2]"})
+    monkeypatch.setattr(explain.urllib.request, "urlopen", endpoint)
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_REASONING_EFFORT", "low")
+
+    _backend().draft("sys", "usr", timeout=5)
+
+    assert endpoint.bodies[0]["reasoning_effort"] == "low"
+
+
+def test_thinking_may_be_left_on_and_is_then_off_on_the_retry(monkeypatch):
+    """With deliberation deliberately on, an empty answer is retried once with
+    it off and a doubled budget — the 2026-09-13 failure mode, made recoverable."""
+    endpoint = _Replies(
+        {"content": "", "reasoning_content": "x" * 6000},
+        {"content": "recovered [BRCA2]"},
+    )
+    monkeypatch.setattr(explain.urllib.request, "urlopen", endpoint)
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_THINKING", "1")
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_MAX_TOKENS", "1500")
+
+    assert _backend().draft("sys", "usr", timeout=5) == "recovered [BRCA2]"
+
+    first, second = endpoint.bodies
+    assert "chat_template_kwargs" not in first and first["max_tokens"] == 1500
+    assert second["chat_template_kwargs"] == {"enable_thinking": False}
+    assert second["max_tokens"] == explain.DEFAULT_MAX_TOKENS
+
+
+def test_empty_content_raises_after_one_retry(monkeypatch):
+    endpoint = _Replies({"content": "", "reasoning_content": "y" * 5274})
+    monkeypatch.setattr(explain.urllib.request, "urlopen", endpoint)
+    monkeypatch.setenv("DNAREPORT_EXPLAIN_MAX_TOKENS", "4000")
+
+    with pytest.raises(explain.EmptyDraftError, match="empty content twice"):
+        _backend().draft("sys", "usr", timeout=5)
+
+    assert len(endpoint.bodies) == 2
+    assert endpoint.bodies[1]["max_tokens"] == 8000
+
+
+def test_null_content_is_treated_as_empty(monkeypatch):
+    endpoint = _Replies({"content": None, "reasoning": "z" * 100})
+    monkeypatch.setattr(explain.urllib.request, "urlopen", endpoint)
+
+    with pytest.raises(explain.EmptyDraftError):
+        _backend().draft("sys", "usr", timeout=5)
+
+
+def test_an_empty_draft_is_a_backend_error_not_a_blank_deeper_dive(env, monkeypatch):
+    """A blank answer must never reach a report as an explanation."""
+    fake = Fake(text="")
+    monkeypatch.setattr(
+        explain,
+        "select_backend",
+        lambda job_backend=None: ("openai_compat", "fake-model", fake),
+    )
+    result = _result(1)
+
+    out = explain.explain_promoted(result)
+
+    assert out["rejected"] == 1 and out["drafted"] == 0
+    finding = result.read_first[0]
+    assert finding.deeper_dive is None
+    assert finding.deeper_dive_meta["rejected_reason"] == (
+        "backend error: EmptyDraftError"
+    )
+
+
+def test_a_non_empty_draft_still_passes_through(env, monkeypatch):
+    fake = Fake(text=f"<dive>{GOOD}</dive>")
+    monkeypatch.setattr(
+        explain,
+        "select_backend",
+        lambda job_backend=None: ("openai_compat", "fake-model", fake),
+    )
+    result = _result(1)
+
+    assert explain.explain_promoted(result)["drafted"] == 1
+    assert result.read_first[0].deeper_dive == GOOD
+
+
+def test_a_silent_cli_is_an_error(monkeypatch):
+    class Done:
+        returncode = 0
+        stdout = "   \n"
+        stderr = ""
+
+    monkeypatch.setattr(explain.subprocess, "run", lambda *a, **k: Done())
+    with pytest.raises(explain.EmptyDraftError):
+        explain.ClaudeCli().draft("sys", "usr", timeout=5)
