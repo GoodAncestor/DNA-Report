@@ -1,5 +1,6 @@
 """Atlas UI uses real frozen evidence and an explicit remote-lookup control."""
 from dnareport.explorer import build_ai_demo, explorer_html, guided_demo_html
+from dnareport.report import compose_result_views
 
 
 def test_demo_atlas_result_is_verified_and_visible():
@@ -21,6 +22,23 @@ def test_demo_atlas_result_is_verified_and_visible():
     assert 'Scorer: AVI_SCORE; Name: AVI_SCORE; Raw score: 0.4998990297317505' in page
     assert 'Name: CACTUS_241_WAY; Raw score: 0.2944031357765198' in page
     assert 'frozen replay makes no API request' in page
+    exports = compose_result_views(result)
+    assert 'AlphaGenome Atlas / AVI research prediction' in exports['markdown']
+    assert 'name: CACTUS_241_WAY; raw score: 0.2944031357765198' in exports['markdown']
+    assert 'avi score: 0.4998990297317505' in exports['markdown']
+    assert 'queried at: 2026-09-26T07:20:47.931514+00:00' in exports['markdown']
+
+
+def test_live_shaped_atlas_export_retains_cache_and_partial_evidence():
+    result = build_ai_demo()
+    result.findings = [next(f for f in result.findings if f.marker == '19-44908684-T-C')]
+    atlas = result.findings[0].detail['alphagenome_atlas']
+    atlas.update(cache_hit=True, remote_status='timeout', missing_scorers=['RNA_SEQ'])
+    exports = compose_result_views(result)
+    assert 'cache hit: True' in exports['markdown']
+    assert 'remote status: timeout' in exports['markdown']
+    assert "missing scorers: ['RNA_SEQ']" in exports['markdown']
+    assert exports['json']['findings'][0]['detail']['alphagenome_atlas']['cache_hit'] is True
 
 
 def test_explorer_has_distinct_atlas_action_and_data_disclosure():

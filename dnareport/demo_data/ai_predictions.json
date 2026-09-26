@@ -176,13 +176,14 @@
             "verified_at": "2026-09-26T07:20:47.931514+00:00",
             "source_url": "https://alphagenome.google/",
             "note": "AVI and the five largest absolute feature contributions are shown from 18 retrieved features. Contributions include sequence conservation and AlphaMissense; they explain the combined score and are not independent confirmations."
-          }
+          },
+          "avi_score": 0.4998990297317505
         }
       }
     },
     {
       "variant_id": "7-140753336-A-T",
-      "description": "Protein example: AlphaMissense predicts high protein impact for BRAF V600E. This is a reference variant, not a claim about a person\u2019s genotype.",
+      "description": "Protein example: AlphaMissense predicts high protein impact for BRAF V600E. This is a reference variant, not a claim about a person’s genotype.",
       "detail": {
         "gene": "BRAF",
         "provenance": {

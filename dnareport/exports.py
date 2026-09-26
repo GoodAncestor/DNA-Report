@@ -28,7 +28,7 @@ _TIER_ORDER = {"robust": 0, "moderate": 1, "speculative": 2, "unknown": 3}
 #: Bumped whenever the Markdown's STRUCTURE changes — headings, front-matter keys,
 #: ordering. Prose edits do not move it. It exists so an agent parsing this file
 #: can refuse a shape it does not know instead of silently mis-reading one.
-MARKDOWN_FORMAT_VERSION = "2.1"
+MARKDOWN_FORMAT_VERSION = "2.2"
 
 
 def report_json(result, marker_url=None) -> str:
@@ -150,6 +150,22 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
                     if prediction.get(key) is not None:
                         lines.append(f"  <br>{key.replace('_', ' ')}: {prediction[key]}")
                 lines.append("  <br>Model score is not a personal disease probability.")
+        atlas = detail.get("alphagenome_atlas")
+        if isinstance(atlas, dict) and atlas:
+            lines.append("  <br>**AlphaGenome Atlas / AVI research prediction:**")
+            for key in ("status", "avi_score", "avi_phred", "assembly", "queried_at", "data_version",
+                        "provenance", "cache_hit", "local_status", "remote_status", "missing_scorers"):
+                if atlas.get(key) is not None:
+                    lines.append(f"  <br>{key.replace('_', ' ')}: {atlas[key]}")
+            for track in atlas.get("tracks", []):
+                if not isinstance(track, dict):
+                    continue
+                fields = [f"{key.replace('_', ' ')}: {track[key]}" for key in
+                          ("scorer", "name", "feature", "feature_name", "raw_score", "quantile_score",
+                           "gene_name", "biosample_name", "ontology_curie") if track.get(key) is not None]
+                if fields:
+                    lines.append("  <br>" + "; ".join(fields))
+            lines.append("  <br>AVI ranks predicted variant impact, not personal disease probability. Feature contributions explain the model score; they do not establish a causal disease mechanism.")
         if detail.get("clinical_significance"):
             lines.append(f"  <br>ClinVar: {detail['clinical_significance']}")
         if detail.get("gnomad"):
