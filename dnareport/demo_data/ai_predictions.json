@@ -118,6 +118,33 @@
           "variant_id": "19-44908684-T-C",
           "af": 0.1573587039423507,
           "provenance": "production API cache; snapshot verified 2026-09-26T05:37:55.185564+00:00"
+        },
+        "alphagenome_atlas": {
+          "model": "AlphaGenome Atlas",
+          "variant_id": "19-44908684-T-C",
+          "assembly": "GRCh38",
+          "status": "complete",
+          "tracks": [
+            {
+              "scorer": "AVI_SCORE",
+              "raw_score": 0.4998990297317505,
+              "direction": "unknown",
+              "quantile_score": 0.9869896173477173
+            }
+          ],
+          "n_tracks": 1,
+          "requested_scorers": [
+            "AVI_SCORE"
+          ],
+          "provenance": {
+            "method": "Verified public APOE AVI_SCORE query to AlphaGenome Atlas API; frozen replay makes no API request",
+            "verified_at": "2026-09-26T05:59:42.536002+00:00",
+            "source_url": "https://alphagenome.google/",
+            "note": "Only AVI_SCORE was retrieved for this example; feature contributions were not requested."
+          },
+          "queried_at": "2026-09-26T05:59:42.536002+00:00",
+          "cache_hit": false,
+          "source": "frozen_verified_api"
         }
       }
     },
@@ -247,6 +274,14 @@
       "eligible": 2,
       "scored": 2,
       "note": "Verified lookups from the deployed GRCh38 mirror."
+    },
+    "alphagenome_atlas": {
+      "status": "complete",
+      "eligible": 1,
+      "scored": 1,
+      "cache_hits": 0,
+      "source": "frozen_verified_api",
+      "note": "Verified public APOE AVI score. Frozen demo replay; feature contributions were not requested."
     }
   }
 }
