@@ -809,6 +809,48 @@ def disclaimer():
         "with a qualified clinician who has your full context.")
 
 
+@app.get("/explore", response_class=HTMLResponse)
+def variant_explorer(variant: str = ""):
+    from .explorer import explorer_html
+    return HTMLResponse(explorer_html(variant), headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
+
+
+@app.post("/api/variant")
+async def variant_evidence(request: Request):
+    from .predictions import explore_variant, normalize_variant
+    _rate_limit("variant:" + _client_key(request))
+    body = await _json_body(request)
+    if not isinstance(body, dict) or body.get("reference_build") != "GRCh38":
+        raise HTTPException(400, "An explicit GRCh38 reference build is required.")
+    if not isinstance(body.get("variant"), str) or len(body["variant"]) > 125:
+        raise HTTPException(400, "Supply one variant of at most 125 characters.")
+    if not isinstance(body.get("predict", False), bool):
+        raise HTTPException(400, "predict must be true or false.")
+    try:
+        variant = normalize_variant(body["variant"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    def run():
+        from .prediction_job import bounded_payload
+        with _inflight:
+            return bounded_payload(variant, predict=body.get("predict", False))
+    payload = await run_in_threadpool(run)
+    return JSONResponse(payload, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@app.get("/demo/ai")
+def ai_prediction_demo(format: str = ""):
+    from .explorer import build_ai_demo, guided_demo_html
+    if format not in ("", "html", "json", "markdown", "md"):
+        raise HTTPException(400, "Use html, json or markdown")
+    result = build_ai_demo()
+    if format == "json":
+        return JSONResponse(compose_result_views(result)["json"])
+    if format in ("markdown", "md"):
+        return PlainTextResponse(compose_result_views(result)["markdown"], media_type="text/markdown")
+    return HTMLResponse(guided_demo_html(result))
+
+
 @app.get("/demo/combined")
 def demo_combined(format: str = "", accept: str = Header(default=""),
                   x_api_key: str = Header(default=""), api_key: str = ""):
@@ -1258,7 +1300,7 @@ def health():
     reference_demos = ["hg002"] if ready(directory(RESULT_DIR)) else []
     return {"status": "ok", "version": __version__, "commit": BUILD_COMMIT,
             "built": BUILD_TIME, "queue": queue_enabled(),
-            "json_api": bool(API_KEYS), "demos": sorted(list(_DEMOS) + ["combined", "nanopore"] + reference_demos),
+            "json_api": bool(API_KEYS), "demos": sorted(list(_DEMOS) + ["combined", "nanopore", "ai"] + reference_demos),
             "native_uploads_enabled": ONT_UPLOADS_ENABLED}
 
 

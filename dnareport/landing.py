@@ -355,6 +355,11 @@ _LANDING_TEMPLATE = """<!doctype html>
        <div class="d">One fictional sample, linked variants and native CpG fractions.
          Explore coverage, missing measurements and downloadable test inputs.</div></a>
      __HG002_CARD__
+     <a class="specimen demo-link" href="/demo/ai#view=site&amp;predictions=only">
+       <div class="no">AI PREDICTIONS</div><div class="t">AlphaGenome + AlphaMissense</div>
+       <div class="d">Compare verified regulatory and protein-impact predictions. Explore each variant and its evidence.</div></a>
+     <a class="specimen" href="/explore"><div class="no">SINGLE-VARIANT EXPLORER</div>
+       <div class="t">Bring one DNA change</div><div class="d">Look up evidence and request a research prediction. No genome upload needed.</div></a>
    </div>
    <p class="hint">Blood and buccal use public methylation profiles. Genome examples
      illustrate variant reporting; the combined example joins separate inputs.

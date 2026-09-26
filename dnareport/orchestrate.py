@@ -308,6 +308,7 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
 
     # array formats have no REF/ALT and vary in genome build, so parse once and
     # reuse the parsed callset for both the ClinVar screen and the trait table.
+    carried = []
     parsed = None
     if is_array:
         try:
@@ -515,48 +516,39 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
     except Exception:
         pass
 
-    # AlphaMissense pathogenicity, layered onto variant findings (chrom-pos-ref-alt):
-    # a computational benign/pathogenic call for missense variants ClinVar hasn't
-    # curated. Mirror-first — no-op until refresh:alphamissense builds the mirror.
-    try:
-        from geneask.annotators.alphamissense import annotate_findings as _am
-        amn = _am(findings)
-        if amn:
-            notes.append(f"AlphaMissense: added pathogenicity to {amn} missense variants")
-    except Exception:
-        pass
-
+    # Predictions retain their own coverage and never change clinical tiers.
+    from .predictions import enrich, provider_statuses, select_novel_candidates
+    novel = []
+    selection = {"status": "not_applicable", "selected": 0}
+    if not is_array and not offline_only:
+        try:
+            novel, selection = select_novel_candidates(carried, findings, path)
+        except Exception:
+            selection = {"status": "unavailable", "selected": 0}
+    prediction_status = enrich(findings + novel, offline=offline_only)
+    prediction_status["selection"] = selection
+    findings += [f for f in novel if f.detail.get("alphagenome") or f.detail.get("alphamissense")]
+    for f in novel:
+        f.detail["variant_explorer_url"] = "/explore?variant=" + f.marker
+    if selection.get("not_screened", 0):
+        limits["ai_candidates"] = {"shown": selection.get("screened", 0),
+                                   "found": selection["quality_eligible"],
+                                   "scope": "quality-qualified candidate screen, not model positives"}
+    scan_stats["ai_predictions"] = prediction_status
+    statuses.extend(provider_statuses(prediction_status))
+    for model, label in (("alphamissense", "AlphaMissense"), ("alphagenome", "AlphaGenome")):
+        row = prediction_status[model]
+        notes.append(f"{label}: {row.get('status', 'not run')}; {row.get('scored', 0)} variants scored.")
+    if selection.get("quality_eligible"):
+        notes.append(f"Additional-variant research screen: examined {selection.get('screened', 0)} of "
+                     f"{selection['quality_eligible']} quality-qualified candidates; "
+                     f"{selection.get('selected', 0)} were uncertain or lacked an exact local ClinVar match. "
+                     "Selection uses call quality, not predicted disease risk.")
     if offline_only:
         notes.append("Variant annotations used local reference data only; live per-variant APIs were not queried.")
         for finding in findings:
             finding.detail = {**(finding.detail or {}), "modality": "genome"}
         return findings, notes, limits
-
-    # AlphaGenome regulatory VEP, layered onto UNCERTAIN variant findings (the ones
-    # ClinVar can't resolve): predicts a regulatory effect from sequence for
-    # non-coding / uncertain-significance variants the catalogues miss. Key-gated,
-    # opt-in, per-report capped, disk-cached — no-op unless ALPHA_GENOME_KEY +
-    # ALPHAGENOME_ENABLED are set (the license constraint travels with the key).
-    try:
-        from geneask.annotators.alphagenome_vep import (annotate_findings as _ag,
-                                                        default_pacing as _ag_pacing)
-        # AlphaGenome publishes no quota — their stated advice is to increase load
-        # until RESOURCE_EXHAUSTED — so there is no daily number to budget against.
-        # Pace, bound the wait, and state when a run was cut short.
-        agp = _ag_pacing()
-        agn = _ag(findings, pacing=agp)
-        if agn:
-            notes.append(f"AlphaGenome: predicted regulatory effect for {agn} uncertain variants")
-        if agp.client_missing:
-            notes.append("AlphaGenome: enabled but its client library is not installed on this "
-                         "server, so nothing was scored — a deployment fault, not a result")
-        elif agp.halted:
-            notes.append("AlphaGenome: quota exhausted upstream; remaining variants were not scored")
-        elif agp.deadline is not None and agp.deadline.expired():
-            notes.append("AlphaGenome: stopped at this report's time budget; "
-                         "remaining uncertain variants were not scored")
-    except Exception:
-        pass
 
     # gnomAD population frequency, layered onto variant findings (chrom-pos-ref-alt
     # markers): reframes a scary ClinVar hit with how common the variant actually is.
@@ -796,6 +788,7 @@ def _scan_stats(path: str, result: "ReportResult") -> dict:
     except OSError:
         input_bytes = 0
     return {
+        "ai_predictions": (result.scan_stats or {}).get("ai_predictions", {}),
         "input_bytes": input_bytes,
         "markers_scanned": (result.scan_stats or {}).get(
             "markers_scanned", len({f.marker for f in findings})

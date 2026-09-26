@@ -10,6 +10,12 @@ import dnareport.web as web
 client = TestClient(web.app)
 
 
+@pytest.fixture(autouse=True)
+def _frontdoor_key(monkeypatch):
+    monkeypatch.setattr(web, "API_KEYS", {"test-key": "default"})
+
+
+
 def test_landing_has_upload_and_demos():
     r = client.get("/")
     assert r.status_code == 200

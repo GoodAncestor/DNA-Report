@@ -1,0 +1,252 @@
+{
+  "notice": "Verified public AI examples captured on 2026-09-26T05:35:48.749638+00:00. Model output is real; these are not measurements from one person.",
+  "provenance": {
+    "verified_at": "2026-09-26T05:35:48.749638+00:00",
+    "genome_build": "GRCh38",
+    "production_verification": {
+      "alphagenome_enabled": true,
+      "alphagenome_client_available": true,
+      "alphamissense_mirror_available": true,
+      "alphamissense_mirror_rows": 71034269,
+      "fresh_alphagenome_api_call_succeeded": true
+    },
+    "reference_verified_at": "2026-09-26T05:37:55.185564+00:00"
+  },
+  "examples": [
+    {
+      "variant_id": "13-32316419-C-G",
+      "description": "Regulatory example: a public test substitution near BRCA2. Compare the strongest predicted molecular effect with the tissue and scorer that produced it.",
+      "detail": {
+        "gene": "BRCA2",
+        "provenance": {
+          "method": "fresh direct AlphaGenome API score_variant; not a cache hit",
+          "verified_at": "2026-09-26T05:35:48.749638+00:00",
+          "source_url": "https://www.alphagenomedocs.com/",
+          "note": "Selected public test substitution documented in project memory; not the CAG>C deletion in bundled VCF. Highest absolute normalized effect across 11,250 scored tracks; score is not disease probability."
+        },
+        "variant_explorer_url": "/explore?variant=13-32316419-C-G",
+        "alphagenome": {
+          "variant_id": "13-32316419-C-G",
+          "top_modality": "CHIP_HISTONE",
+          "quantile_score": -0.9999998807907104,
+          "direction": "unknown",
+          "n_tracks": 11250,
+          "biosample_name": "HEK293",
+          "biosample_type": "cell_line",
+          "ontology_curie": "EFO:0001182",
+          "histone_mark": "H3K36me3",
+          "track_name": "EFO:0001182 Histone ChIP-seq H3K36me3",
+          "variant_scorer": "CenterMaskScorer(requested_output=CHIP_HISTONE, width=2001, aggregation_type=DIFF_LOG2_SUM)",
+          "sequence_length": 131072
+        },
+        "clinvar_lookup": "no_match",
+        "clinvar_scope": "local_mirror",
+        "gnomad_status": "unavailable"
+      }
+    },
+    {
+      "variant_id": "19-44908684-T-C",
+      "description": "Protein example: AlphaMissense predicts low protein impact for APOE C130R. This model result does not rule out trait associations through other mechanisms.",
+      "detail": {
+        "gene": "APOE",
+        "provenance": {
+          "method": "read-only lookup in deployed AlphaMissense GRCh38 mirror",
+          "source_url": "https://zenodo.org/records/8208688/files/AlphaMissense_hg38.tsv.gz",
+          "verified_at": "2026-09-26T05:35:48.749638+00:00",
+          "note": "Model classification describes predicted protein impact; it does not erase independently measured trait or disease associations."
+        },
+        "variant_explorer_url": "/explore?variant=19-44908684-T-C",
+        "alphamissense": {
+          "variant_id": "19-44908684-T-C",
+          "uniprot_id": "P02649",
+          "protein_variant": "C130R",
+          "pathogenicity": 0.0365,
+          "class": "likely_benign",
+          "am_class": "likely_benign"
+        },
+        "variant_id": "19-44908684-T-C",
+        "clinvar_variation_id": "17864",
+        "clinical_significance": "Conflicting classifications of pathogenicity|other|risk factor",
+        "review_status": "criteria provided, conflicting classifications",
+        "gold_stars": 1,
+        "conditions": [
+          "Primary degenerative dementia of the Alzheimer type, presenile onset",
+          "Familial hypercholesterolemia",
+          "Warfarin response",
+          "Alzheimer disease 2",
+          "Lipoprotein glomerulopathy",
+          "Alzheimer disease 4",
+          "Alzheimer disease"
+        ],
+        "condition_ids": [
+          "MedGen:C5779573",
+          "MONDO:0005439",
+          "MedGen:C0020445",
+          "OMIM:PS143890",
+          "MONDO:0007390",
+          "MedGen:C0750384",
+          "OMIM:122700",
+          "MONDO:0007089",
+          "MedGen:C1863051",
+          "OMIM:104310",
+          "Orphanet:1020",
+          "MONDO:0012725",
+          "MedGen:C2673196",
+          "OMIM:611771",
+          "Orphanet:329481",
+          "MONDO:0011743",
+          "MedGen:C1847200",
+          "OMIM:606889",
+          "Orphanet:1020",
+          "Human_Phenotype_Ontology:HP:0002511",
+          "Human_Phenotype_Ontology:HP:0006878",
+          "Human_Phenotype_Ontology:HP:0007213",
+          "MONDO:0004975",
+          "MeSH:D000544",
+          "MedGen:C0002395",
+          "Orphanet:1020"
+        ],
+        "molecular_consequence": "missense_variant",
+        "origin": [
+          "germline"
+        ],
+        "allele_id": "32903",
+        "clinvar_lookup": "matched",
+        "clinvar_scope": "local_mirror",
+        "gnomad_status": "cached_match",
+        "gnomad": {
+          "variant_id": "19-44908684-T-C",
+          "af": 0.1573587039423507,
+          "provenance": "production API cache; snapshot verified 2026-09-26T05:37:55.185564+00:00"
+        }
+      }
+    },
+    {
+      "variant_id": "7-140753336-A-T",
+      "description": "Protein example: AlphaMissense predicts high protein impact for BRAF V600E. This is a reference variant, not a claim about a person\u2019s genotype.",
+      "detail": {
+        "gene": "BRAF",
+        "provenance": {
+          "method": "read-only lookup in deployed AlphaMissense GRCh38 mirror",
+          "source_url": "https://zenodo.org/records/8208688/files/AlphaMissense_hg38.tsv.gz",
+          "verified_at": "2026-09-26T05:35:48.749638+00:00",
+          "note": "Public reference example only. Computational classification is not a personal clinical diagnosis."
+        },
+        "variant_explorer_url": "/explore?variant=7-140753336-A-T",
+        "alphamissense": {
+          "variant_id": "7-140753336-A-T",
+          "uniprot_id": "P15056",
+          "protein_variant": "V600E",
+          "pathogenicity": 0.9927,
+          "class": "likely_pathogenic",
+          "am_class": "likely_pathogenic"
+        },
+        "variant_id": "7-140753336-A-T",
+        "clinvar_variation_id": "13961",
+        "clinical_significance": "Conflicting classifications of pathogenicity",
+        "review_status": "criteria provided, conflicting classifications",
+        "gold_stars": 1,
+        "conditions": [
+          "Melanoma",
+          "BRAF-related glioma susceptibility",
+          "Vascular malformation",
+          "Cystic epithelial invagination containing papillae lined by columnar epithelium",
+          "Lymphangioma",
+          "Malignant neoplastic disease",
+          "Cardiovascular phenotype",
+          "Cardio-facio-cutaneous syndrome",
+          "Nephroblastoma",
+          "RASopathy",
+          "Multiple myeloma",
+          "Papillary thyroid carcinoma",
+          "Cerebral arteriovenous malformation",
+          "Nongerminomatous germ cell tumor",
+          "Non-small cell lung carcinoma",
+          "ASTROCYTOMA, LOW-GRADE, SOMATIC",
+          "Carcinoma of colon"
+        ],
+        "condition_ids": [
+          "Human_Phenotype_Ontology:HP:0002861",
+          "Human_Phenotype_Ontology:HP:0002887",
+          "Human_Phenotype_Ontology:HP:0006777",
+          "Human_Phenotype_Ontology:HP:0007474",
+          "MONDO:0005105",
+          "MeSH:D008545",
+          "MedGen:C0025202",
+          "MONDO:0024291",
+          "MedGen:C0158570",
+          "Human_Phenotype_Ontology:HP:0100764",
+          "MONDO:0002013",
+          "MedGen:C0024221",
+          "Orphanet:2415",
+          "MONDO:0004992",
+          "MedGen:C0006826",
+          "MedGen:CN230736",
+          "MONDO:0015280",
+          "MedGen:C1275081",
+          "OMIM:PS115150",
+          "Orphanet:1340",
+          "Human_Phenotype_Ontology:HP:0000115",
+          "Human_Phenotype_Ontology:HP:0002667",
+          "MONDO:0006058",
+          "MeSH:D009396",
+          "MedGen:C0027708",
+          "Orphanet:654",
+          "MONDO:0021060",
+          "MedGen:C5555857",
+          "Orphanet:536391",
+          "Human_Phenotype_Ontology:HP:0006775",
+          "MONDO:0009693",
+          "MeSH:D009101",
+          "MedGen:C0026764",
+          "OMIM:254500",
+          "Orphanet:29073",
+          "Orphanet:85443",
+          "Human_Phenotype_Ontology:HP:0002895",
+          "MONDO:0005075",
+          "MeSH:D000077273",
+          "MedGen:C0238463",
+          "Orphanet:146",
+          "Human_Phenotype_Ontology:HP:0002408",
+          "MONDO:0007154",
+          "MedGen:C0917804",
+          "OMIM:108010",
+          "Orphanet:46724",
+          "MONDO:0021656",
+          "MedGen:C1266158",
+          "Human_Phenotype_Ontology:HP:0030358",
+          "MONDO:0005233",
+          "MeSH:D002289",
+          "MedGen:C0007131",
+          "MedGen:C2674727",
+          "MONDO:0002032",
+          "MedGen:C0699790"
+        ],
+        "molecular_consequence": "missense_variant",
+        "origin": [
+          "germline",
+          "somatic"
+        ],
+        "allele_id": "29000",
+        "clinvar_lookup": "matched",
+        "clinvar_scope": "local_mirror",
+        "gnomad_status": "unavailable"
+      }
+    }
+  ],
+  "coverage": {
+    "alphagenome": {
+      "status": "complete",
+      "eligible": 1,
+      "scored": 1,
+      "cache_hits": 0,
+      "note": "Frozen result from a verified fresh API call; demo playback makes no API call."
+    },
+    "alphamissense": {
+      "status": "available",
+      "eligible": 2,
+      "scored": 2,
+      "note": "Verified lookups from the deployed GRCh38 mirror."
+    }
+  }
+}

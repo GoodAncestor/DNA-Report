@@ -142,6 +142,18 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
         source_link = (finding.get("links") or {}).get("source")
         if source_link:
             lines.append(f"  <br>Source record: {source_link}")
+        for model, label in (("alphagenome", "AlphaGenome"), ("alphamissense", "AlphaMissense")):
+            prediction = detail.get(model)
+            if prediction:
+                lines.append(f"  <br>**{label} research prediction:**")
+                for key in ("class", "protein_variant", "pathogenicity", "quantile_score", "top_modality", "biosample_name", "gene_name", "scored_at", "provenance"):
+                    if prediction.get(key) is not None:
+                        lines.append(f"  <br>{key.replace('_', ' ')}: {prediction[key]}")
+                lines.append("  <br>Model score is not a personal disease probability.")
+        if detail.get("clinical_significance"):
+            lines.append(f"  <br>ClinVar: {detail['clinical_significance']}")
+        if detail.get("gnomad"):
+            lines.append(f"  <br>gnomAD allele frequency: {detail['gnomad'].get('af', 'not available')}")
         interpretation = finding.get("interpretation") or {}
         condition = interpretation.get("condition")
         if not condition and detail.get("conditions"):
@@ -194,6 +206,13 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     person_line = _person_line(doc.get("person") or {})
     if person_line:
         out += [f"Your age and sex: {person_line}", ""]
+
+    ai_coverage = (getattr(result, "scan_stats", None) or {}).get("ai_predictions")
+    if ai_coverage:
+        out += ["## AI prediction coverage", "", "Unscored variants are not negative or benign results.", ""]
+        for model, row in ai_coverage.items():
+            out.append(f"- {model}: " + json.dumps(row, ensure_ascii=False, sort_keys=True))
+        out.append("")
 
     from .sequencing_summary import summary_markdown
     out += summary_markdown(result)
