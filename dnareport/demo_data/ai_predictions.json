@@ -46,7 +46,7 @@
     },
     {
       "variant_id": "19-44908684-T-C",
-      "description": "Protein example: AlphaMissense predicts low protein impact for APOE C130R. This model result does not rule out trait associations through other mechanisms.",
+      "description": "Protein and combined-impact example: AlphaMissense predicts low protein impact for APOE C130R, while Atlas AVI ranks its combined impact. AVI includes conservation and AlphaMissense features, so these are not independent confirmations. Compare the feature contributions with the curated clinical evidence.",
       "detail": {
         "gene": "APOE",
         "provenance": {
@@ -127,24 +127,56 @@
           "tracks": [
             {
               "scorer": "AVI_SCORE",
+              "name": "AVI_SCORE",
               "raw_score": 0.4998990297317505,
-              "direction": "unknown",
-              "quantile_score": 0.9869896173477173
+              "quantile_score": 0.9869896173477173,
+              "direction": "unknown"
+            },
+            {
+              "scorer": "AVI_SCORE_FEATURE_IMPORTANCE",
+              "name": "CACTUS_241_WAY",
+              "raw_score": 0.2944031357765198,
+              "direction": "unknown"
+            },
+            {
+              "scorer": "AVI_SCORE_FEATURE_IMPORTANCE",
+              "name": "PHASTCONS_470_WAY",
+              "raw_score": 0.14471329748630524,
+              "direction": "unknown"
+            },
+            {
+              "scorer": "AVI_SCORE_FEATURE_IMPORTANCE",
+              "name": "ALPHAMISSENSE",
+              "raw_score": 0.02913823164999485,
+              "direction": "unknown"
+            },
+            {
+              "scorer": "AVI_SCORE_FEATURE_IMPORTANCE",
+              "name": "MAX_ABS_POLYADENYLATION",
+              "raw_score": 0.02236613817512989,
+              "direction": "unknown"
+            },
+            {
+              "scorer": "AVI_SCORE_FEATURE_IMPORTANCE",
+              "name": "MERGED_SPLICING",
+              "raw_score": 0.014766786247491837,
+              "direction": "unknown"
             }
           ],
-          "n_tracks": 1,
+          "n_tracks": 19,
           "requested_scorers": [
-            "AVI_SCORE"
+            "AVI_SCORE",
+            "AVI_SCORE_FEATURE_IMPORTANCE"
           ],
-          "provenance": {
-            "method": "Verified public APOE AVI_SCORE query to AlphaGenome Atlas API; frozen replay makes no API request",
-            "verified_at": "2026-09-26T05:59:42.536002+00:00",
-            "source_url": "https://alphagenome.google/",
-            "note": "Only AVI_SCORE was retrieved for this example; feature contributions were not requested."
-          },
-          "queried_at": "2026-09-26T05:59:42.536002+00:00",
+          "queried_at": "2026-09-26T07:20:47.931514+00:00",
           "cache_hit": false,
-          "source": "frozen_verified_api"
+          "source": "frozen_verified_api",
+          "provenance": {
+            "method": "Verified public APOE AVI_SCORE and AVI_SCORE_FEATURE_IMPORTANCE queries to AlphaGenome Atlas API; frozen replay makes no API request",
+            "verified_at": "2026-09-26T07:20:47.931514+00:00",
+            "source_url": "https://alphagenome.google/",
+            "note": "AVI and the five largest absolute feature contributions are shown from 18 retrieved features. Contributions include sequence conservation and AlphaMissense; they explain the combined score and are not independent confirmations."
+          }
         }
       }
     },
@@ -281,7 +313,7 @@
       "scored": 1,
       "cache_hits": 0,
       "source": "frozen_verified_api",
-      "note": "Verified public APOE AVI score. Frozen demo replay; feature contributions were not requested."
+      "note": "Verified public APOE AVI score and feature contributions. Frozen demo replay; five largest absolute contributions shown from 18 retrieved features."
     }
   }
 }
