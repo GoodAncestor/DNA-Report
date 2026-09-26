@@ -9,13 +9,13 @@ dependencies = [
     # All three are private GoodAncestor repos (not on PyPI); git-source specs so a clean
     # install resolves from GitHub. Private-repo access uses git credentials (see README "Install").
     "biocore[variants] @ git+https://github.com/GoodAncestor/bio-core.git@e7d9a2b535785d2d77555ee5175e4e6cee65505a",
-    "methylask @ git+https://github.com/GoodAncestor/MethylAsk.git@0f584f63d90419e19b75e91cfe2cd733d35054f1",
+    "methylask @ git+https://github.com/GoodAncestor/MethylAsk.git@2c2408d4d282dacdc4e7e04fb301d8ada0c3c50f",
     # [alphagenome] pulls the DeepMind client the regulatory-VEP annotator needs.
     # It is an extra in GeneAsk because the CLI does not need it, but this app
     # DOES: without it score_variant's ImportError is swallowed by the same
     # catch-all that stops one bad variant failing a report, so the feature would
     # sit switched on and silently score nothing.
-    "geneask[alphagenome] @ git+https://github.com/GoodAncestor/GeneAsk.git@8064201ffe0803972cbbf46d55276921a57f3033",
+    "geneask[alphagenome] @ git+https://github.com/GoodAncestor/GeneAsk.git@c796d2418b0cc75d00bb4238ce7e3f4a064c9775",
 ]
 
 [project.scripts]
