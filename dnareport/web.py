@@ -826,6 +826,8 @@ async def variant_evidence(request: Request):
         raise HTTPException(400, "Supply one variant of at most 125 characters.")
     if not isinstance(body.get("predict", False), bool):
         raise HTTPException(400, "predict must be true or false.")
+    if not isinstance(body.get("atlas", False), bool):
+        raise HTTPException(400, "atlas must be true or false.")
     try:
         variant = normalize_variant(body["variant"])
     except ValueError as exc:
@@ -833,7 +835,7 @@ async def variant_evidence(request: Request):
     def run():
         from .prediction_job import bounded_payload
         with _inflight:
-            return bounded_payload(variant, predict=body.get("predict", False))
+            return bounded_payload(variant, predict=body.get("predict", False), atlas=body.get("atlas", False))
     payload = await run_in_threadpool(run)
     return JSONResponse(payload, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 

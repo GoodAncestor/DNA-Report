@@ -50,8 +50,8 @@ def test_explorer_get_only_prefills_and_escapes(monkeypatch):
 
 def test_lookup_post_validates_and_exports(monkeypatch):
     seen=[]
-    def fake(variant, *, predict):
-        seen.append((variant,predict))
+    def fake(variant, *, predict, atlas=False):
+        seen.append((variant,predict,atlas))
         return build_ai_demo()
     from dnareport import prediction_job
     monkeypatch.setattr(p,'explore_variant',fake)
@@ -61,7 +61,7 @@ def test_lookup_post_validates_and_exports(monkeypatch):
         assert client.post('/api/variant',json=payload).status_code==400
     response=client.post('/api/variant',json={'variant':'chr22-36201698-A-C','reference_build':'GRCh38','predict':True})
     assert response.status_code==200
-    assert seen==[('22-36201698-A-C',True)]
+    assert seen==[('22-36201698-A-C',True,False)]
     assert set(response.json())=={'html','report','markdown'}
     assert response.headers['cache-control']=='no-store'
 
@@ -122,12 +122,26 @@ def test_vus_is_selected_even_without_pathogenic_classification(monkeypatch):
 def test_hung_prediction_is_killed_and_local_evidence_retained(monkeypatch):
     import subprocess
     from dnareport import prediction_job as job
-    def timeout(*a,**kw):
-        assert kw['timeout']==45
-        raise subprocess.TimeoutExpired(a[0],45)
-    monkeypatch.setattr(job.subprocess,'run',timeout)
+    killed=[]
+    class Child:
+        pid=987654
+        calls=0
+        def communicate(self, value=None, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                assert timeout == 45
+                raise subprocess.TimeoutExpired('prediction',45)
+            return '', ''
+        def kill(self): killed.append(self.pid)
+    child=Child()
+    monkeypatch.setattr(job.subprocess,'Popen',lambda *a,**kw:child)
+    monkeypatch.setattr(job.os,'killpg',lambda pid,sig:killed.append(pid))
     monkeypatch.setattr(job,'payload',lambda variant,**kw:{'variant':variant,**kw})
-    assert job.bounded_payload('1-10-A-T',True)['failure']=='timeout'
+    result=job.bounded_payload('1-10-A-T',atlas=True)
+    assert result['failure']=='timeout'
+    assert result['failed_models']==['alphagenome_atlas']
+    assert killed==[child.pid] and child.calls==2
+
 
 
 def test_explorer_keeps_full_clinvar_record(monkeypatch):
@@ -138,3 +152,53 @@ def test_explorer_keeps_full_clinvar_record(monkeypatch):
     f=p.explore_variant('1-10-A-T').findings[0]
     assert f.detail['conditions']==['Condition'] and f.detail['gold_stars']==2
     assert f.link.endswith('/123/')
+
+
+def test_atlas_request_is_separate_from_fresh_inference(monkeypatch):
+    from dnareport import prediction_job
+    calls=[]
+    monkeypatch.setattr(prediction_job, 'bounded_payload', lambda variant, **kw: calls.append(kw) or {})
+    client=TestClient(web.app)
+    assert client.post('/api/variant', json={'variant':'1-10-A-T', 'reference_build':'GRCh38', 'atlas':True}).status_code==200
+    assert calls==[{'predict':False, 'atlas':True}]
+    assert client.post('/api/variant', json={'variant':'1-10-A-T', 'reference_build':'GRCh38', 'atlas':'yes'}).status_code==400
+
+
+def test_local_avi_prioritizes_impact_after_call_quality_gate(monkeypatch):
+    from geneask.annotators import atlas_avi, clinvar_mirror as cv
+    monkeypatch.setattr(p, 'declared_grch38', lambda path:True)
+    monkeypatch.setattr(cv, 'lookup_from_mirror', lambda ids:{})
+    monkeypatch.setattr(atlas_avi, 'local_status', lambda:{'status':'ready','available':True})
+    def local(ids, *, status):
+        status['available']=True
+        return {vid:{'avi_score':score, 'tracks':[], 'status':'complete'}
+                for vid,score in [('1-11-A-T',.95),('1-12-A-T',.5),('1-13-A-T',.99)] if vid in ids}
+    monkeypatch.setattr(atlas_avi,'lookup_many',local)
+    fs,coverage=p.select_novel_candidates([call('1-10-A-T',gq=99),call('1-11-A-T',gq=30),
+                                          call('1-12-A-T',gq=80),call('1-13-A-T',dp=2)],[],'unused',limit=2)
+    assert [f.marker for f in fs]==['1-11-A-T','1-12-A-T']
+    assert fs[0].detail['alphagenome_atlas']['avi_score']==.95
+    assert coverage['atlas_ranking']['scored']==2 and coverage['quality_eligible']==3
+    assert 'AVI descending' in coverage['selection']
+
+
+def test_atlas_local_partial_is_usable_and_explicit():
+    from biocore.providers.base import Health
+    row=p.provider_statuses({'alphagenome_atlas':{'status':'partial','scored':1}})[-1]
+    assert row.health==Health.OK and 'partial' in row.note
+
+
+def test_atlas_requires_grch38_and_offline_never_enables_remote(monkeypatch):
+    from geneask.annotators import alphagenome_atlas as atlas, alphamissense as am
+    monkeypatch.setattr(am, 'annotate_findings', lambda *a, **kw:None)
+    calls=[]
+    def annotate(fs, *, offline, status):
+        calls.append(([f.marker for f in fs], offline))
+        status.update(status='complete', scored=0)
+    monkeypatch.setattr(atlas, 'annotate_findings', annotate)
+    unknown=Finding(marker='1-10-A-T',source='variant_lookup',description='test',tier=Tier.SPECULATIVE, categories=[Category.CLINICAL],detail={})
+    known=Finding(marker='1-11-A-T',source='variant_lookup',description='test',tier=Tier.SPECULATIVE,categories=[Category.CLINICAL],detail={'reference_build':'GRCh38'})
+    status=p.enrich([unknown,known],offline=True)
+    assert calls==[(['1-11-A-T'],True)]
+    assert status['alphagenome_atlas']['reference_skipped']==1
+    assert p.enrich([unknown],offline=True)['alphagenome_atlas']['status']=='reference_not_declared_grch38'

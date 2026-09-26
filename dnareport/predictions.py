@@ -2,6 +2,7 @@
 """Bounded research predictions, with coverage separate from clinical evidence."""
 from __future__ import annotations
 import heapq
+import itertools
 import os
 import re
 import sqlite3
@@ -60,7 +61,29 @@ def select_novel_candidates(carried, existing, path, limit=None):
             seen.add(vid)
             coverage['quality_eligible'] += 1
             yield v
-    selected = heapq.nsmallest(limit, eligible(), key=lambda v: (-v['gq'], -v['dp'], v['variant_id']))
+    from geneask.annotators import atlas_avi
+    atlas_state = atlas_avi.local_status()
+    coverage['atlas_ranking'] = {**atlas_state, 'scored': 0, 'queried': 0}
+    def ranked():
+        stream = eligible()
+        while chunk := list(itertools.islice(stream, 10000)):
+            scores = {}
+            if atlas_state.get('available'):
+                batch_status = {}
+                scores = atlas_avi.lookup_many([v['variant_id'] for v in chunk], status=batch_status)
+                coverage['atlas_ranking']['queried'] += len(chunk)
+                coverage['atlas_ranking']['scored'] += len(scores)
+                if not batch_status.get('available'):
+                    atlas_state['available'] = False
+                    coverage['atlas_ranking'].update(status='partial', available=False)
+            for v in chunk:
+                yield {**v, '_atlas_avi': scores.get(v['variant_id'])}
+    def priority(v):
+        avi = (v.get('_atlas_avi') or {}).get('avi_score')
+        return (avi is None, -avi if avi is not None else 0, -v['gq'], -v['dp'], v['variant_id'])
+    selected = heapq.nsmallest(limit, ranked(), key=priority)
+    if coverage['atlas_ranking']['scored']:
+        coverage['selection'] = 'PASS autosomal GRCh38, DP ≥10, GQ ≥20; local AVI descending, unscored after scored, then GQ, DP, variant ID'
     records = lookup_from_mirror([v['variant_id'] for v in selected])
     if records is None:
         coverage['status'] = 'clinvar_mirror_unavailable'
@@ -68,6 +91,8 @@ def select_novel_candidates(carried, existing, path, limit=None):
     coverage['screened'] = len(selected)
     out = []
     for v in selected:
+        v = dict(v)
+        atlas_result = v.pop('_atlas_avi', None)
         rec = records.get(v['variant_id'])
         sig = str((rec or {}).get('clinical_significance') or '').lower()
         uncertain = 'uncertain' in sig or 'conflicting' in sig
@@ -79,6 +104,7 @@ def select_novel_candidates(carried, existing, path, limit=None):
             description=description, tier=Tier.SPECULATIVE, categories=[Category.CLINICAL],
             detail={**v, **(rec or {}), 'novel_candidate': rec is None, 'modality': 'genome', 'topic': 'other',
                     'reference_build': 'GRCh38', 'clinvar_lookup': 'matched' if rec else 'no_match',
+                    **({'alphagenome_atlas': atlas_result} if atlas_result else {}),
                     'selection_reason': 'Quality-qualified uncertain or uncatalogued candidate'}))
     out.sort(key=lambda f: (bool(f.detail.get('novel_candidate')), f.marker))
     coverage['uncertain_selected'] = sum(not f.detail['novel_candidate'] for f in out)
@@ -88,7 +114,7 @@ def select_novel_candidates(carried, existing, path, limit=None):
     return out, coverage
 
 
-def enrich(findings, *, offline=False):
+def enrich(findings, *, offline=False, atlas_live=None):
     """Return per-model statuses, without hiding missing providers as negative scores."""
     from geneask.annotators import alphamissense as am, alphagenome_vep as ag
     status = {}
@@ -98,6 +124,23 @@ def enrich(findings, *, offline=False):
         status['alphamissense'] = am_status
     except Exception:
         status['alphamissense'] = {'status': 'unavailable', 'scored': 0}
+    # Atlas is precomputed evidence: local AVI/cache reads are always allowed.
+    # Interactive callers independently choose Atlas lookup and fresh inference.
+    try:
+        from geneask.annotators import alphagenome_atlas as atlas
+        atlas_status = {}
+        # Coordinate-only Atlas lookups require a declared assembly. No build
+        # is guessed from a chromosome-position marker.
+        atlas_findings = [f for f in findings if f.detail.get('reference_build') == 'GRCh38']
+        atlas.annotate_findings(atlas_findings, offline=offline if atlas_live is None else not atlas_live,
+                                status=atlas_status)
+        atlas_status['reference_skipped'] = len(findings) - len(atlas_findings)
+        if findings and not atlas_findings:
+            atlas_status['status'] = 'reference_not_declared_grch38'
+            atlas_status['note'] = 'Atlas requires declared GRCh38 coordinates; these findings were not submitted.'
+        status['alphagenome_atlas'] = atlas_status
+    except Exception:
+        status['alphagenome_atlas'] = {'status': 'unavailable', 'scored': 0}
     if offline:
         status['alphagenome'] = {'status': 'offline', 'scored': 0, 'note': 'Live predictions were not requested for this reference import.'}
     else:
@@ -112,16 +155,16 @@ def enrich(findings, *, offline=False):
 
 def provider_statuses(status):
     out = []
-    for model in ('alphagenome', 'alphamissense'):
+    for model in ('alphagenome', 'alphamissense', 'alphagenome_atlas'):
         row = status.get(model, {})
         state = row.get('status', 'not_run')
-        good = state in ('ready', 'complete', 'ok', 'available')
+        good = state in ('ready', 'complete', 'ok', 'available') or (state == 'partial' and row.get('scored', 0) > 0)
         out.append(ProviderStatus(name=model, health=Health.OK if good else Health.UNAVAILABLE,
             note=f"{state.replace('_', ' ')}; {row.get('scored', 0)} variants scored. " + str(row.get('note', ''))))
     return out
 
 
-def explore_variant(variant, *, predict=False):
+def explore_variant(variant, *, predict=False, atlas=False):
     from .orchestrate import ReportResult
     from .detect import InputKind
     from geneask.interpret.clinvar_screen import load_panel, index_by_variant_id, _record_link
@@ -166,7 +209,7 @@ def explore_variant(variant, *, predict=False):
                 detail['gnomad'] = {'af': af, 'provenance': 'local API cache; no live request'}
         except (OSError, ValueError, sqlite3.DatabaseError):
             pass
-    status = enrich(fs, offline=not predict)
+    status = enrich(fs, offline=not predict, atlas_live=atlas)
     if not predict:
         status['alphagenome'] = {'status': 'not_requested', 'eligible': 1, 'scored': 0, 'note': 'Use Request AlphaGenome prediction to ask the model about this variant.'}
     result = ReportResult(kind=InputKind.VCF, engines=('geneask',), findings=fs,

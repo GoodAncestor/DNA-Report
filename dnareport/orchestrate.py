@@ -517,7 +517,18 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
         pass
 
     # Predictions retain their own coverage and never change clinical tiers.
-    from .predictions import enrich, provider_statuses, select_novel_candidates
+    from .predictions import enrich, provider_statuses, select_novel_candidates, declared_grch38
+    # Array screen markers are anchored to the GRCh38 panel; VCF markers need
+    # an explicit assembly declaration before coordinate-only Atlas lookup.
+    atlas_grch38 = is_array
+    if not is_array:
+        try:
+            atlas_grch38 = declared_grch38(path)
+        except (OSError, ValueError):
+            atlas_grch38 = False
+    if atlas_grch38:
+        for finding in findings:
+            finding.detail['reference_build'] = 'GRCh38'
     novel = []
     selection = {"status": "not_applicable", "selected": 0}
     if not is_array and not offline_only:
@@ -527,7 +538,9 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
             selection = {"status": "unavailable", "selected": 0}
     prediction_status = enrich(findings + novel, offline=offline_only)
     prediction_status["selection"] = selection
-    findings += [f for f in novel if f.detail.get("alphagenome") or f.detail.get("alphamissense")]
+    findings += [f for f in novel if f.detail.get("alphagenome") or f.detail.get("alphamissense")
+                 or (f.detail.get("alphagenome_atlas") or {}).get("avi_score") is not None
+                 or (f.detail.get("alphagenome_atlas") or {}).get("tracks")]
     for f in novel:
         f.detail["variant_explorer_url"] = "/explore?variant=" + f.marker
     if selection.get("not_screened", 0):
@@ -536,14 +549,15 @@ def _run_geneask(path: str, kind: InputKind, trait_table: str | None = None,
                                    "scope": "quality-qualified candidate screen, not model positives"}
     scan_stats["ai_predictions"] = prediction_status
     statuses.extend(provider_statuses(prediction_status))
-    for model, label in (("alphamissense", "AlphaMissense"), ("alphagenome", "AlphaGenome")):
+    for model, label in (("alphamissense", "AlphaMissense"), ("alphagenome", "AlphaGenome"),
+                         ("alphagenome_atlas", "AlphaGenome Atlas")):
         row = prediction_status[model]
         notes.append(f"{label}: {row.get('status', 'not run')}; {row.get('scored', 0)} variants scored.")
     if selection.get("quality_eligible"):
         notes.append(f"Additional-variant research screen: examined {selection.get('screened', 0)} of "
                      f"{selection['quality_eligible']} quality-qualified candidates; "
                      f"{selection.get('selected', 0)} were uncertain or lacked an exact local ClinVar match. "
-                     "Selection uses call quality, not predicted disease risk.")
+                     f"Selection: {selection.get('selection', 'call quality')}. AVI ranks predicted molecular impact, not disease risk.")
     if offline_only:
         notes.append("Variant annotations used local reference data only; live per-variant APIs were not queried.")
         for finding in findings:
