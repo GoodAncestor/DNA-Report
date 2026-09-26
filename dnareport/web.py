@@ -299,6 +299,9 @@ def _read_report_for_mcp(report_id: str) -> dict:
     """
     body = _r2_result_html(report_id, "json")
     if body is not None:
+        from .output_policy import artifact_allowed
+        if not artifact_allowed(body, "json"):
+            return {"status": "blocked", "detail": "The saved report is incompatible with commercial output mode. Regenerate it under the current mode."}
         try:
             return {"status": "ready", "report": json.loads(body)}
         except ValueError:
@@ -781,6 +784,8 @@ _DEMO_HTML_CACHE: dict[str, str] = {}
 
 
 def _cached_demo_html(key: str, build) -> str:
+    from biocore.licensing import output_mode
+    key = output_mode() + ":" + key
     html = _DEMO_HTML_CACHE.get(key)
     if html is None:
         html = build()
@@ -832,6 +837,9 @@ async def variant_evidence(request: Request):
         variant = normalize_variant(body["variant"])
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    from biocore.licensing import commercial_mode
+    if commercial_mode() and (body.get('predict', False) or body.get('atlas', False)):
+        raise HTTPException(403, "Noncommercial API model requests are excluded in commercial output mode. Use evidence lookup for permitted local datasets.")
     def run():
         from .prediction_job import bounded_payload
         with _inflight:
@@ -930,6 +938,15 @@ def hg002_demo_file(name: str):
     root = directory(RESULT_DIR)
     if name not in FILES or not ready(root):
         raise HTTPException(404, "Public HG002 artifact is not available")
+    from .output_policy import artifact_allowed
+    from biocore.licensing import commercial_mode
+    if commercial_mode() and name.startswith('report.'):
+        if not artifact_allowed((root / name).read_text(), name.rsplit('.', 1)[1]):
+            raise HTTPException(409, "This saved demo report must be regenerated for commercial output mode.")
+    elif commercial_mode() and name == 'HG002.variant-findings.json.gz':
+        import gzip
+        if not artifact_allowed(gzip.decompress((root / name).read_bytes()).decode(), 'json'):
+            raise HTTPException(409, "This saved findings export must be regenerated for commercial output mode.")
     return FileResponse(root / name, media_type=FILES[name], filename=name)
 
 
@@ -944,6 +961,10 @@ def demo_hg002(format: str = "", accept: str = Header(default="")):
         raise HTTPException(503, "HG002 reference report has not been installed")
     extension = "json" if _wants_json(accept, format) else "md" if format in ("markdown", "md") else "html"
     media = {"html":"text/html", "json":"application/json", "md":"text/markdown"}[extension]
+    from .output_policy import artifact_allowed
+    from biocore.licensing import commercial_mode
+    if commercial_mode() and not artifact_allowed((root / f"report.{extension}").read_text(), extension):
+        raise HTTPException(409, "This saved demo report must be regenerated for commercial output mode.")
     return FileResponse(root / f"report.{extension}", media_type=media)
 
 
@@ -1601,6 +1622,9 @@ def result(job_id: str, format: str = "", accept: str = Header(default="")):
     fmt = _requested_format(format, accept)
     body = _r2_result_html(job_id, fmt)
     if body is not None:
+        from .output_policy import artifact_allowed
+        if not artifact_allowed(body, fmt):
+            raise HTTPException(409, "This saved report was not generated for commercial output. Regenerate it under the current output mode.")
         headers = {}
         if fmt != "html":
             # A download rather than a wall of text in the browser.
@@ -1609,7 +1633,11 @@ def result(job_id: str, format: str = "", accept: str = Header(default="")):
                         headers=headers)
     out = os.path.join(RESULT_DIR, f"{job_id}.html")
     if fmt == "html" and os.path.exists(out):
-        return HTMLResponse(Path(out).read_text())
+        from .output_policy import artifact_allowed
+        body = Path(out).read_text()
+        if not artifact_allowed(body, fmt):
+            raise HTTPException(409, "This saved report was not generated for commercial output. Regenerate it under the current output mode.")
+        return HTMLResponse(body)
     # No report yet. Three different situations used to be presented identically,
     # as a 202 behind a page that refreshed for ever — so a job that had failed,
     # a job that was lost, and a job still running were indistinguishable, and the

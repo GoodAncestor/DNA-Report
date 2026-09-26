@@ -124,7 +124,7 @@ def enrich(findings, *, offline=False, atlas_live=None):
         status['alphamissense'] = am_status
     except Exception:
         status['alphamissense'] = {'status': 'unavailable', 'scored': 0}
-    # Atlas is precomputed evidence: local AVI/cache reads are always allowed.
+    # Atlas is precomputed evidence: local AVI and cache reads follow the output-mode licensing policy.
     # Interactive callers independently choose Atlas lookup and fresh inference.
     try:
         from geneask.annotators import alphagenome_atlas as atlas

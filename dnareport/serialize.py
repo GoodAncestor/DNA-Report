@@ -63,6 +63,8 @@ def report_summary(result, *, top_n: int = None) -> dict:
     `bounded` and `limits` say whether the report is a complete account or a
     truncated one, so a reader that only ever sees this summary is still told.
     """
+    from .output_policy import result_for_output
+    result = result_for_output(result)
     top_n = SUMMARY_TOP_N if top_n is None else top_n
     # getattr throughout: this is also called with the lighter result objects the
     # CLI and the tests build, which carry findings but not every field.
@@ -202,6 +204,8 @@ def result_to_json(result, marker_url=None) -> dict:
     """Full structured result. Findings are grouped by marker (mirroring the
     human report), each marker carrying its findings sorted strongest-first is
     left to the client — here they are listed flat with all fields."""
+    from .output_policy import result_for_output, output_policy
+    result = result_for_output(result)
     findings = [_finding_json(f, marker_url) for f in result.findings]
     # topic + tier tallies so a consumer can summarize without re-counting
     from collections import Counter
@@ -212,6 +216,7 @@ def result_to_json(result, marker_url=None) -> dict:
     directions = Counter(f["direction"] for f in findings if f.get("direction"))
     return {
         "schema_version": SCHEMA_VERSION,
+        "output_policy": output_policy(),
         "input_kind": getattr(result.kind, "value", str(result.kind)),
         "tissue": result.tissue,
         "engines": list(result.engines),

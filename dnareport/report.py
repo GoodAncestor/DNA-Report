@@ -45,6 +45,8 @@ def display_notes(result, scratch: str = "", filename: str = "") -> list[str]:
     """Engine notes, with server-side scratch paths replaced by the user's own
     filename. Engines interpolate the path they were handed, which would
     otherwise show the temp directory layout to whoever reads the report."""
+    from .output_policy import result_for_output
+    result = result_for_output(result)
     from .uploads import sanitize_note
     out = []
     for n in (result.notes or []):
@@ -56,6 +58,8 @@ def display_notes(result, scratch: str = "", filename: str = "") -> list[str]:
 
 def compose_result_views(result, *, marker_url=None, filename: str = "") -> dict:
     """Build JSON and Markdown from one covariate-filtered result view."""
+    from .output_policy import result_for_output
+    result = result_for_output(result)
     from copy import copy
     from .exports import report_markdown
     from .highlights import split_display_findings
@@ -80,6 +84,8 @@ def _render_with_views(result, out_path: str) -> str:
     """bio-core's renderer with the outcome view, the action plan and the person
     line attached. The plain `orchestrate.render` stays for callers that have
     none of those; this is the one place the product hands them over."""
+    from .output_policy import result_for_output
+    result = result_for_output(result)
     from biocore.report.render import render_html
     from .orchestrate import _disclaimer_path, _marker_url
     outcomes = getattr(result, "outcomes", None)
@@ -97,6 +103,9 @@ def _render_with_views(result, out_path: str) -> str:
                         'overflow-wrap:anywhere;max-width:100%;display:inline-block}'
                         '@media(max-width:600px){.finding>.body{grid-column:1/-1;min-width:0}'
                         '.atlas-tracks{padding-left:18px}}</style></head>', 1)
+    from .output_policy import policy_html, output_policy
+    html = html.replace('</head>', '<meta name="dna-output-mode" content="' + output_policy()['mode'] + '"></head>', 1)
+    html = html.replace('<body>', '<body>' + policy_html(), 1)
     with open(out_path, "w") as fh:
         fh.write(html)
     return out_path
@@ -248,6 +257,8 @@ def render_report(result, out_path: str, *, filename: str = "",
     the user's claim link refreshing for ever against an object that was never
     uploaded.
     """
+    from .output_policy import result_for_output
+    result = result_for_output(result)
     if not result.findings and not result.clocks and not result.scan_stats.get("nanopore"):
         from . import pages
         label = kind_label or KIND_LABEL.get(result.kind,
@@ -257,6 +268,11 @@ def render_report(result, out_path: str, *, filename: str = "",
             notes=display_notes(result, scratch, filename),
             statuses=result.provider_status)
             + export_links_html(claim_id))
+        from .output_policy import policy_html, output_policy
+        body = Path(out_path).read_text()
+        body = body.replace('</head>', '<meta name="dna-output-mode" content="' + output_policy()['mode'] + '"></head>', 1)
+        body = body.replace('<body>', '<body>' + policy_html(), 1)
+        Path(out_path).write_text(body)
         return out_path
     _render_findings(result, out_path)
     # Exports are offered on the report itself, where someone is looking at the

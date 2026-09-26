@@ -112,3 +112,54 @@ After a release, verify both app and worker dependency revisions. Precomputed
 HG002 artifacts retain their original presentation until deliberately regenerated;
 this release does not silently replace reference provenance or run new predictions
 on the complete HG002 genome.
+
+### Output mode and dataset terms
+
+`DNAREPORT_OUTPUT_MODE=noncommercial|commercial` controls the included model
+outputs on the server. The default is `noncommercial`, preserving the research
+service. An invalid value fails closed to commercial mode and is reported in the
+output-policy metadata. A request parameter cannot relax a commercial server.
+No earlier project-wide commercial-output switch was found during the audit.
+
+| Dataset/access route | Commercial output eligibility |
+| --- | --- |
+| Atlas AVI static download | Permitted under the downloadable artifact terms |
+| Atlas AVI API, including cached API responses | Excluded; noncommercial |
+| Atlas merged splicing, static or API | Excluded; noncommercial |
+| Atlas feature contributions, static or API | Excluded; noncommercial |
+| AlphaGenome sequence API outputs | Excluded; noncommercial |
+| AlphaMissense predictions | Permitted; current official predictions license is CC BY 4.0 |
+
+These labels cover the listed model datasets and access routes; they are not a
+blanket commercial-compliance guarantee for every reference dataset. In
+particular, API AVI does not become permissive because the same number may be
+available in the permissive static artifact. Provenance follows the result.
+
+Commercial rendering removes restricted cached/frozen model fields and their
+model-derived prose. The output formats apply the same policy, including direct
+JSON/Markdown exports and the guided demo. Outcomes/actions are rebuilt from
+permitted findings rather than retaining old composite narratives. The explorer
+shows dataset eligibility and omits restricted remote actions; the API rejects
+those requests with HTTP 403. Evidence lookup may still return eligible local
+AVI alongside curated evidence.
+
+Persisted artifacts declare their generation mode. A commercial deployment
+returns HTTP 409 for saved research-mode or unlabelled reports through `/result`
+and the HG002 report-download routes; MCP returns a definite `blocked` status.
+Those reports must be regenerated under the current mode. Raw public measurements
+are not reclassified by this model-output policy. In-memory demo HTML caches are
+partitioned by mode.
+
+JSON adds `output_policy` with the effective mode, configuration status and each
+dataset's terms and eligibility. Markdown format `2.3` adds `output_mode` to front
+matter and a dataset-usage section. HTML shows the same labels and links to the
+[Google Output Terms](https://deepmind.google.com/science/alphagenome/output-terms)
+where noncommercial AlphaGenome/Atlas outputs are presented.
+
+The access-route distinctions were checked against the official Atlas paper's
+Data Availability table and the
+[Google AlphaGenome Terms](https://deepmind.google.com/science/alphagenome/terms)
+on 2026-09-26. The static AVI dataset is permissive; static merged splicing and
+feature attributions are explicitly noncommercial in that table.
+
+The current [official AlphaMissense predictions license](https://github.com/google-deepmind/alphamissense#alphamissense-predictions-license) is CC BY 4.0; these predictions remain available in commercial output with attribution. Earlier project metadata describing them as noncommercial was outdated.

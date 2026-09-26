@@ -25,9 +25,17 @@ async function run(predict,atlas=false){
  frame.srcdoc=data.html;frame.hidden=false;urls.forEach(URL.revokeObjectURL);urls=[];
  for(const [id,text,type] of [['json-download',JSON.stringify(data.report,null,2),'application/json'],['md-download',data.markdown,'text/markdown']]){const url=URL.createObjectURL(new Blob([text],{type}));urls.push(url);document.getElementById(id).href=url;}document.querySelector('#exports').hidden=false;message.textContent='Evidence ready. Check model coverage below to see what was scored or unavailable.';
  }catch(e){message.textContent=e.message;}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
-document.querySelector('#atlas').addEventListener('click',()=>{if(form.reportValidity())run(false,true)});
-form.addEventListener('submit',e=>{e.preventDefault();run(false)});document.querySelector('#predict').addEventListener('click',()=>{if(form.reportValidity())run(true)});
+document.querySelector('#atlas')?.addEventListener('click',()=>{if(form.reportValidity())run(false,true)});
+form.addEventListener('submit',e=>{e.preventDefault();run(false)});document.querySelector('#predict')?.addEventListener('click',()=>{if(form.reportValidity())run(true)});
 </script></body></html>'''
+    from .output_policy import policy_html
+    from biocore.licensing import commercial_mode
+    page = page.replace('<form id="explorer">', policy_html() + '<form id="explorer">')
+    if commercial_mode():
+        page = page.replace('<button type="button" id="atlas">Look up Atlas / AVI</button>', '')
+        page = page.replace('<button type="button" id="predict">Request AlphaGenome prediction</button>', '')
+        page = page.replace('Evidence lookup uses local databases and cached Atlas results when available. Atlas lookup sends the variant coordinates to Google’s Atlas service when enabled, to retrieve precomputed scores and feature contributions. Requesting a prediction sends this variant and its sequence context to Google’s AlphaGenome service when enabled.',
+                            'Commercial output mode includes AlphaMissense and eligible local static AVI. Noncommercial API results and caches are excluded.')
     return page.replace('__VARIANT__', html.escape(str(variant)[:125], quote=True))
 
 
@@ -45,15 +53,20 @@ def build_ai_demo():
             detail={**row['detail'], 'modality':'genome', 'measurement_origin':'public_example',
                     'reference_build':'GRCh38'}))
     status = data['coverage']
-    return ReportResult(kind=InputKind.VCF, engines=('geneask',), findings=findings,
+    result = ReportResult(kind=InputKind.VCF, engines=('geneask',), findings=findings,
         provider_status=provider_statuses(status),
         notes=[data['notice'], 'These are separate public research examples, not one person’s genome. Opening this demo makes no live prediction requests.',
                'Export provenance includes retrieval dates and source information.'],
         scan_stats={'context':'public_ai_demo','ai_predictions':status,'ai_demo':data['provenance'],'markers_scanned':len(findings),'findings_total':len(findings)})
+    from .output_policy import result_for_output
+    return result_for_output(result)
 
 
 def guided_demo_html(result):
     from .report import report_html
     rendered = report_html(result, filename='Verified public AI prediction examples')
     intro = '''<section class="ai-guide"><h2>Explore AI predictions</h2><p>Verified public examples show what each model contributes. AlphaMissense evaluates protein changes; AlphaGenome evaluates regulatory effects; AlphaGenome Atlas ranks predicted variant impact with AVI. The APOE example includes a verified Atlas AVI result alongside its AlphaMissense prediction. Compare the model evidence with the available ClinVar record, and open each variant in the explorer to investigate further.</p><p>These examples are separate variants, not a person’s genome. Model predictions support research and are not clinical conclusions.</p><p><a href="/explore">Look up your own variant</a> · <a href="/demo/ai?format=json">Download JSON</a> · <a href="/demo/ai?format=markdown">Download Markdown</a></p></section>'''
+    from biocore.licensing import commercial_mode
+    if commercial_mode():
+        intro = '<section class="ai-guide"><h2>Public variant examples</h2><p>Noncommercial model outputs in this demo are excluded by the server’s commercial output mode. AlphaMissense predictions and available curated evidence remain visible.</p><p><a href="/explore">Explore a variant</a></p></section>'
     return rendered.replace('<body>', '<body><script>if(!location.hash)location.hash="view=site&predictions=only";</script>'+intro, 1)

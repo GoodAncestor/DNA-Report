@@ -28,7 +28,7 @@ _TIER_ORDER = {"robust": 0, "moderate": 1, "speculative": 2, "unknown": 3}
 #: Bumped whenever the Markdown's STRUCTURE changes — headings, front-matter keys,
 #: ordering. Prose edits do not move it. It exists so an agent parsing this file
 #: can refuse a shape it does not know instead of silently mis-reading one.
-MARKDOWN_FORMAT_VERSION = "2.2"
+MARKDOWN_FORMAT_VERSION = "2.3"
 
 
 def report_json(result, marker_url=None) -> str:
@@ -114,6 +114,8 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     """
     from .serialize import result_to_json
 
+    from .output_policy import result_for_output
+    result = result_for_output(result)
     doc = result_to_json(result)
     sm = doc["summary"]
     kind = doc["input_kind"]
@@ -196,6 +198,7 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
     fm = [
         "---",
         f"format: dna-report-markdown/{MARKDOWN_FORMAT_VERSION}",
+        f"output_mode: {doc['output_policy']['mode']}",
         f"input_kind: {kind}",
         f"findings: {len(doc['findings'])}",
         f"bounded: {'true' if sm['bounded'] else 'false'}",
@@ -231,6 +234,12 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
         out.append("")
 
     from .sequencing_summary import summary_markdown
+    out += ["## Dataset usage", "", "Output mode: **" + doc['output_policy']['mode'] + "**.", ""]
+    for dataset in doc['output_policy']['datasets']:
+        eligibility = "Commercial use permitted" if dataset['commercial_allowed'] else "Noncommercial use only"
+        included = "included when available" if dataset['included_in_mode'] else "excluded in this mode"
+        out.append(f"- {dataset['label']}: {eligibility}; {included}. [Terms]({dataset['terms_url']})")
+    out.append("")
     out += summary_markdown(result)
 
     if doc.get("important"):
