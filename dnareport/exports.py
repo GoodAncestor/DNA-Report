@@ -20,6 +20,7 @@ the worker. Regenerating them later from a different run would let the three
 disagree about a person's genome, which is worse than not offering them.
 """
 from __future__ import annotations
+import html
 import json
 from pathlib import Path
 
@@ -167,7 +168,16 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
                            "gene_name", "biosample_name", "ontology_curie") if track.get(key) is not None]
                 if fields:
                     lines.append("  <br>" + "; ".join(fields))
-            lines.append("  <br>AVI ranks predicted variant impact, not personal disease probability. Feature contributions explain the model score; they do not establish a causal disease mechanism.")
+            from biocore.report.render import (ATLAS_CLINICAL_DISCLAIMER, atlas_drivers_sentence,
+                                               atlas_rank_sentence)
+            tracks = [t for t in atlas.get("tracks", []) if isinstance(t, dict)]
+            avi_track = next((t for t in tracks if t.get("scorer") == "AVI_SCORE"), None)
+            raw = atlas.get("avi_score", (avi_track or {}).get("raw_score"))
+            for sentence in (atlas_rank_sentence(atlas, avi_track), atlas_drivers_sentence(tracks, raw)):
+                if sentence:
+                    lines.append("  <br>" + html.unescape(sentence))
+            lines.append("  <br>AVI ranks predicted variant impact, not personal disease probability. Feature contributions explain the model score; they do not establish a causal disease mechanism. "
+                         "AVI already includes AlphaMissense as an input, so agreement between them is not independent confirmation. " + ATLAS_CLINICAL_DISCLAIMER)
         if detail.get("clinical_significance"):
             lines.append(f"  <br>ClinVar: {detail['clinical_significance']}")
         if detail.get("gnomad"):

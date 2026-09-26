@@ -27,6 +27,10 @@ def test_demo_atlas_result_is_verified_and_visible():
     assert 'name: CACTUS_241_WAY; raw score: 0.2944031357765198' in exports['markdown']
     assert 'avi score: 0.4998990297317505' in exports['markdown']
     assert 'queried at: 2026-09-26T07:20:47.931514+00:00' in exports['markdown']
+    for text in (page, exports['markdown']):
+        assert "higher than about 98.7% of the model's reference distribution" in text
+        assert 'conservation across 241 mammals (about 59% of the score)' in text
+        assert 'not approved for, any clinical use' in text
 
 
 def test_live_shaped_atlas_export_retains_cache_and_partial_evidence():
