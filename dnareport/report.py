@@ -91,6 +91,10 @@ def _render_with_views(result, out_path: str) -> str:
                        outcomes=list(outcomes) if outcomes else None,   # no tab for an empty view
                        actions=list(getattr(result, "actions", None) or []),
                        person=_person(result))
+    # The explorer embeds reports in an iframe narrower than the page viewport.
+    # Multiple model names must wrap inside that finding's available width.
+    html = html.replace('</head>', '<style>.finding .pred{white-space:normal;'
+                        'overflow-wrap:anywhere;max-width:100%;display:inline-block}</style></head>', 1)
     with open(out_path, "w") as fh:
         fh.write(html)
     return out_path
