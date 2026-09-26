@@ -22,6 +22,7 @@ from typing import Protocol
 
 
 PROMPT_VERSION = "2"
+RESPONSE_CONTRACT_VERSION = "2"
 
 _ZYGOSITY_CLASS = {
     "het": "one altered copy",
@@ -96,6 +97,7 @@ def cache_key(facts: dict, backend: str, model: str) -> str:
     raw = json.dumps(
         {
             "v": PROMPT_VERSION,
+            "response_contract": RESPONSE_CONTRACT_VERSION,
             "backend": backend,
             "model": model,
             "facts": stable,
@@ -243,6 +245,13 @@ def _max_tokens() -> int:
     return max(wanted, 600)
 
 
+class DraftResponseError(RuntimeError):
+    """The backend answered, but did not return a complete usable draft."""
+
+
+_TRUNCATED = frozenset({"length", "max_tokens", "max_output_tokens"})
+
+
 class OpenAICompat:
     def __init__(self, base_url: str, model: str, key_file: str | None):
         self.base_url = base_url.rstrip("/")
@@ -257,6 +266,41 @@ class OpenAICompat:
             raise PermissionError("The deeper-dive key file must use mode 0600.")
         return path.read_text().strip()
 
+    @staticmethod
+    def _apply_request_options(body: dict) -> dict:
+        """Overlay operator-configured OpenAI-compatible request fields.
+
+        Compatible servers expose different generation controls.  The JSON
+        object in ``DNAREPORT_EXPLAIN_REQUEST_OPTIONS`` is applied last, so an
+        operator can set a field their server accepts, or remove a default by
+        giving it ``null``, without coupling those controls to model selection.
+        """
+        configured = os.environ.get("DNAREPORT_EXPLAIN_REQUEST_OPTIONS", "")
+        if not configured:
+            return body
+        try:
+            overlay = json.loads(configured)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                "DNAREPORT_EXPLAIN_REQUEST_OPTIONS must be a JSON object"
+            ) from error
+        if not isinstance(overlay, dict):
+            raise ValueError(
+                "DNAREPORT_EXPLAIN_REQUEST_OPTIONS must be a JSON object"
+            )
+        protected = {"model", "messages", "stream"}.intersection(overlay)
+        if protected:
+            fields = ", ".join(sorted(protected))
+            raise ValueError(
+                f"DNAREPORT_EXPLAIN_REQUEST_OPTIONS cannot set {fields}"
+            )
+        for field, value in overlay.items():
+            if value is None:
+                body.pop(field, None)
+            else:
+                body[field] = value
+        return body
+
     def _post(self, body: dict, timeout: float) -> dict:
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
@@ -270,13 +314,48 @@ class OpenAICompat:
             return json.loads(response.read())
 
     @staticmethod
-    def _read(document: dict) -> tuple[str, str, int]:
-        """Return the visible text, the finish reason, and the thought length."""
-        choice = ((document or {}).get("choices") or [{}])[0] or {}
-        message = choice.get("message") or {}
-        content = (message.get("content") or "").strip()
+    def _read(document: object) -> tuple[str, str | None, int]:
+        """Return the visible text, the finish reason, and the thought length.
+
+        A malformed response, or one the backend says it stopped for any reason
+        other than completion or its token budget, raises DraftResponseError.
+        An empty or budget-truncated answer is returned for ``draft`` to retry.
+        """
+        if not isinstance(document, dict):
+            raise DraftResponseError("backend returned a malformed response")
+        choices = document.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise DraftResponseError("backend returned no choices")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise DraftResponseError("backend returned a malformed choice")
+
+        finish_reason = choice.get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise DraftResponseError("backend returned a malformed finish reason")
+        if finish_reason not in {None, "stop"} | _TRUNCATED:
+            raise DraftResponseError("backend did not complete the draft")
+
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            raise DraftResponseError("backend returned no message")
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content.strip()
+        elif isinstance(content, list):
+            text = "".join(
+                part.get("text", "")
+                for part in content
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") in {"text", "output_text"}
+                    and isinstance(part.get("text"), str)
+                )
+            ).strip()
+        else:
+            text = ""
         thought = message.get("reasoning_content") or message.get("reasoning") or ""
-        return content, str(choice.get("finish_reason") or ""), len(thought)
+        return text, finish_reason, len(thought) if isinstance(thought, str) else 0
 
     def draft(self, system: str, user: str, *, timeout: float) -> str:
         messages = [
@@ -292,17 +371,25 @@ class OpenAICompat:
         }
         if os.environ.get("DNAREPORT_EXPLAIN_THINKING", "0") != "1":
             body.update(reasoning_off_body())
+        self._apply_request_options(body)
+        budget = body.get("max_tokens", budget)
 
         content, finish, thought = self._read(self._post(body, timeout))
-        if content:
+        if content and finish not in _TRUNCATED:
             return content
 
         # One retry: deliberation off for the engines that read the switch, and
         # a doubled budget for the engines that ignore it (ai-silo needed 4000
-        # to finish a thought and still answer, measured 2026-09-13).
+        # to finish a thought and still answer, measured 2026-09-13). A draft
+        # cut off by its budget gets the same retry; a second cut-off is
+        # refused rather than shown as a partial explanation.
         retry = dict(body, max_tokens=max(budget * 2, DEFAULT_MAX_TOKENS))
         retry.update(reasoning_off_body())
         content, finish, thought = self._read(self._post(retry, timeout))
+        if content and finish in _TRUNCATED:
+            raise DraftResponseError(
+                f"backend truncated the draft (finish_reason={finish})"
+            )
         if content:
             return content
         raise EmptyDraftError(
@@ -492,6 +579,14 @@ def explain_promoted(
                 raise EmptyDraftError(
                     f"{model} wrote nothing between the <dive> markers."
                 )
+        except DraftResponseError as error:
+            outcome["rejected"] += 1
+            finding.deeper_dive_meta = {
+                "rejected_reason": str(error),
+                "backend": name,
+                "model": model,
+            }
+            continue
         except Exception as error:
             outcome["rejected"] += 1
             finding.deeper_dive_meta = {
