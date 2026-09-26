@@ -52,9 +52,14 @@ an existing gnomAD API-cache frequency are preserved with retrieval provenance.
 
 The official API now exposes precomputed Atlas results. GeneAsk includes an
 explicit opt-in `alphagenome_atlas.query_variant` adapter; it is not automatically
-invoked by reports or this explorer. Production verification found AlphaGenome
-0.8.0 without `alphagenome.atlas`. Atlas requires a newer compatible SDK, explicit
-scorer configuration and an execution deadline before enabling a live path.
+invoked by reports or this explorer. The September 26 release installed
+AlphaGenome 0.9.0 with `alphagenome.atlas` in the app and workers. A bounded
+production access check retrieved 22 scorer names and successfully queried the
+public APOE example `19-44908684-T-C` using `AVI_SCORE` (raw score 0.49989903,
+quantile 0.98698962). These are scorer outputs, not personal disease probabilities.
+Atlas was enabled only inside that isolated verification process; service
+configuration remains off. Explicit scorer configuration and an execution
+deadline are still required before enabling a live path.
 No silent fallback to fresh inference occurs. The explorer links to the official
 Atlas portal for immediate access.
 
