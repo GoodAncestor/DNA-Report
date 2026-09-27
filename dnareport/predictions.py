@@ -141,6 +141,15 @@ def enrich(findings, *, offline=False, atlas_live=None):
         status['alphagenome_atlas'] = atlas_status
     except Exception:
         status['alphagenome_atlas'] = {'status': 'unavailable', 'scored': 0}
+        atlas_findings = []
+    # Local merged splicing is non-commercial; the reader refuses before any read in commercial mode.
+    try:
+        from geneask.annotators import atlas_splicing
+        splicing_status = {}
+        atlas_splicing.annotate_findings(atlas_findings, status=splicing_status)
+        status['alphagenome_atlas_splicing'] = splicing_status
+    except Exception:
+        status['alphagenome_atlas_splicing'] = {'status': 'unavailable', 'scored': 0}
     if offline:
         status['alphagenome'] = {'status': 'offline', 'scored': 0, 'note': 'Live predictions were not requested for this reference import.'}
     else:

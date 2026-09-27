@@ -178,6 +178,11 @@ def report_markdown(result, *, filename: str = "", title: str = "DNA-Report",
                     lines.append("  <br>" + html.unescape(sentence))
             lines.append("  <br>AVI ranks predicted variant impact, not personal disease probability. Feature contributions explain the model score; they do not establish a causal disease mechanism. "
                          "AVI already includes AlphaMissense as an input, so agreement between them is not independent confirmation. " + ATLAS_CLINICAL_DISCLAIMER)
+        splicing = detail.get("alphagenome_atlas_splicing")
+        if isinstance(splicing, dict) and splicing.get("splicing_score") is not None:
+            lines.append(f"  <br>**AlphaGenome Atlas merged splicing (non-commercial):** {splicing['splicing_score']}")
+            if splicing.get("score_explanation"):
+                lines.append(f"  <br>{splicing['score_explanation']}")
         if detail.get("clinical_significance"):
             lines.append(f"  <br>ClinVar: {detail['clinical_significance']}")
         if detail.get("gnomad"):
