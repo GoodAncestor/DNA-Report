@@ -28,7 +28,7 @@ def test_demo_atlas_result_is_verified_and_visible():
     assert 'avi score: 0.4998990297317505' in exports['markdown']
     assert 'queried at: 2026-09-26T07:20:47.931514+00:00' in exports['markdown']
     for text in (page, exports['markdown']):
-        assert "higher than about 98.7% of the model's reference distribution" in text
+        assert 'top 1.3% of the ~9 billion possible single-letter changes Atlas scored (PHRED 18.9)' in text
         assert 'conservation across 241 mammals (about 59% of the score)' in text
         assert 'not approved for, any clinical use' in text
 
