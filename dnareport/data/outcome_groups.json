@@ -1,0 +1,89 @@
+{
+ "_comment": "Display groups for the By outcome view, added 2026-11-08 from the HG002 render (945 cards, 715 of them one-finding 'Gene expression of Affymetrix ID' cards). A group gathers findings into one card for navigation only: it is not a claim that the readouts are one trait, and it never absorbs a polygenic score or an action (those stay on their own trait key). A finding joins a group only when it cites one of the group's PMIDs AND its trait string is one of `exact` (literal, whitespace-trimmed) or starts with one of `prefixes`. Each finding keeps its own trait string in its details. Astra review 2026-11-08 asked for association wording, PMID scope and curated (not case-folded) equivalence.",
+ "gene_expression_affymetrix": {
+  "label": "Gene expression associations (Affymetrix array)",
+  "pmids": [
+   "33752734"
+  ],
+  "prefixes": [
+   "Gene expression of Affymetrix ID:"
+  ]
+ },
+ "nmr_metabolites": {
+  "label": "Blood lipids and metabolites (NMR research associations)",
+  "pmids": [
+   "33413638"
+  ],
+  "exact": [
+   "DHA",
+   "DHAtoFA",
+   "FAw3",
+   "FAw3toFA",
+   "FAw6toFA",
+   "HDL-D",
+   "IDL.FC_pct",
+   "IDL.TG_pct",
+   "Ile",
+   "L-LDL-FC_pct",
+   "L-VLDL-C",
+   "L-VLDL-CE",
+   "L-VLDL-FC",
+   "L-VLDL-L",
+   "L-VLDL-P",
+   "L-VLDL-PL",
+   "L-VLDL-TG",
+   "LAtoFA",
+   "M-HDL-TG",
+   "M-HDL-TG_pct",
+   "M-VLDL-C",
+   "M-VLDL-CE",
+   "M-VLDL-C_pct",
+   "M-VLDL-FC",
+   "M-VLDL-L",
+   "M-VLDL-P",
+   "M-VLDL-PL",
+   "M-VLDL-PL_pct",
+   "M-VLDL-TG",
+   "M-VLDL-TG_pct",
+   "MUFA",
+   "MUFAtoFA",
+   "PUFAtoFA",
+   "S-HDL-TG",
+   "S-HDL-TG_pct",
+   "S-LDL-TG",
+   "S-LDL-TG_pct",
+   "S-VLDL-CE_pct",
+   "S-VLDL-C_pct",
+   "S-VLDL-FC",
+   "S-VLDL-L",
+   "S-VLDL-P",
+   "S-VLDL-PL",
+   "S-VLDL-TG",
+   "S-VLDL-TG_pct",
+   "Serum-TG",
+   "TGtoPG",
+   "TotFA",
+   "UnSat",
+   "VLDL-C",
+   "VLDL-D",
+   "VLDL-TG",
+   "XL-VLDL-P",
+   "XL-VLDL-TG",
+   "XS-VLDL-C_pct",
+   "XS-VLDL-TG",
+   "XS-VLDL-TG_pct"
+  ]
+ },
+ "liver_fat": {
+  "label": "Liver fat",
+  "pmids": [
+   "30796027",
+   "30936141"
+  ],
+  "exact": [
+   "hepatic fat",
+   "Hepatic fat",
+   "Hepatic Fat"
+  ]
+ }
+}

@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 _ALIASES_FILE = Path(__file__).parent / "data" / "outcome_aliases.json"
+_GROUPS_FILE = Path(__file__).parent / "data" / "outcome_groups.json"
 _CLINVAR = {"clinvar", "clinvar_mirror", "clinvar_panel_157"}
 
 
@@ -45,6 +46,43 @@ def _aliases():
         for value in [key, *(values or [])]:
             lookup[_normal(value)] = key
     return lookup, labels
+
+
+def _load_groups() -> list[tuple[str, str, frozenset, tuple, frozenset]]:
+    """(key, label, pmids, prefixes, exact) per display group; malformed specs are skipped."""
+    try:
+        rows = json.loads(_GROUPS_FILE.read_text())
+    except (OSError, ValueError, TypeError):
+        return []
+    if not isinstance(rows, dict):
+        return []
+    out = []
+    for key, spec in rows.items():
+        if key.startswith("_") or not isinstance(spec, dict):
+            continue
+        def strings(name):
+            values = spec.get(name) or []
+            return [str(v).strip() for v in values if isinstance(v, str) and v.strip()] \
+                if isinstance(values, list) else []
+        pmids, prefixes, exact = strings("pmids"), strings("prefixes"), strings("exact")
+        label = spec.get("label")
+        if not pmids or not (prefixes or exact) or not isinstance(label, str) or not label.strip():
+            continue
+        out.append((key, label.strip(), frozenset(pmids), tuple(prefixes), frozenset(exact)))
+    return out
+
+
+def _group_of(finding, groups) -> tuple[str, str] | None:
+    """The display group a finding belongs to: cited PMID and literal trait both match."""
+    pmids = {str(p).strip() for p in (getattr(finding, "pmids", None) or [])}
+    detail = finding.detail or {}
+    traits = {str(detail.get(k) or "").strip() for k in ("trait", "label")} - {""}
+    for key, label, group_pmids, prefixes, exact in groups:
+        if not pmids & group_pmids:
+            continue
+        if traits & exact or any(t.startswith(p) for t in traits for p in prefixes):
+            return key, label
+    return None
 
 
 def _canonical(*values) -> tuple[str, str]:
@@ -101,6 +139,7 @@ def _score_identity(score) -> str:
 def build_outcomes(result) -> list[Outcome]:
     """Build ordered condition, age, medicine, and trait groups."""
     grouped: dict[str, Outcome] = {}
+    groups = _load_groups()
     for finding in result.findings:
         detail = finding.detail or {}
         if finding.source in _CLINVAR:
@@ -116,7 +155,7 @@ def build_outcomes(result) -> list[Outcome]:
             outcome = grouped.setdefault(key, Outcome(key, drug, "medicine"))
             outcome.findings.append(finding)
         elif finding.source in {"gwas_catalog", "ewas_catalog", "marker_reference"}:
-            canonical, label = _trait_identity(finding)
+            canonical, label = _group_of(finding, groups) or _trait_identity(finding)
             key = f"trait:{canonical}"
             outcome = grouped.setdefault(key, Outcome(key, label, "trait"))
             outcome.findings.append(finding)
