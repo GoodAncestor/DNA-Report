@@ -20,6 +20,9 @@ import urllib.request
 from pathlib import Path
 from typing import Protocol
 
+from biocore.copy.check import BANNED as _BANNED
+from biocore.copy.check import FORBIDDEN as _FORBIDDEN
+
 
 PROMPT_VERSION = "2"
 RESPONSE_CONTRACT_VERSION = "2"
@@ -137,22 +140,12 @@ def build_prompt(facts: dict) -> tuple[str, str]:
     )
 
 
-_FORBIDDEN = (
-    "you have ",
-    "you will ",
-    "you'll ",
-    "diagnos",
-    "you are at risk",
-    "you suffer",
-    "guarantee",
-    "certainly",
-    "definitely",
-)
-_BANNED = re.compile(
-    r"honest|it's not |not a [A-Z]|the point is|worth (noting|being explicit)"
-    r"|in other words|crucially|importantly,|notably,|by design|buckle up|dive in",
-    re.I,
-)
+# The banned and forbidden phrase lists are bio-core's, so a model draft, the
+# copy tables and any publish gate apply one list. bio-core's BANNED is a
+# superset of the copy this module used to hold, and keeps `not a [A-Z]`
+# case-sensitive (under re.I the old copy banned every "not a <word>").
+
+
 _CITATION = re.compile(r"\[([^\]]{1,80})\]")
 MAX_WORDS = 180
 
