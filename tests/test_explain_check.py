@@ -34,3 +34,29 @@ def test_rejections():
         "unknown citation"
     )
     assert check_draft("The change sits in BRCA2. Confirm it.", FACTS) == "no citation"
+
+
+def test_banned_list_is_bio_cores():
+    """explain.py holds no private copy: it uses bio-core's one validator list."""
+    from biocore.copy import check
+    from dnareport import explain
+
+    assert explain._BANNED is check.BANNED
+    assert explain._FORBIDDEN is check.FORBIDDEN
+
+
+def test_draft_rejected_by_check_py_for_a_banned_term():
+    from biocore.copy import check
+
+    draft = GOOD + " Crucially, two laboratories agree."
+    assert check_draft(draft, FACTS) == "banned construction: Crucially"
+    problems = check.check_field("terms", "x", "sentence", "Crucially, two laboratories agree.")
+    assert any(p.severity == "error" for p in problems)
+
+
+def test_not_a_capital_is_case_sensitive():
+    # bio-core keeps `not a [A-Z]` case-sensitive: "not a measurement" passes.
+    assert check_draft(GOOD + " This is not a measurement.", FACTS) is None
+    assert check_draft(GOOD + " This is not a Measurement.", FACTS).startswith(
+        "banned construction"
+    )
