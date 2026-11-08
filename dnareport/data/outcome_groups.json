@@ -1,13 +1,19 @@
 {
- "_comment": "Outcome cards that collapse a family of catalogue readouts into one card, because each readout alone is a measurement code a reader cannot interpret. Each finding keeps its own trait string in its details. Matching is exact (or an exact prefix), never fuzzy. Added 2026-11-08 from the HG002 render: 715 Affymetrix expression cards (all EWAS Catalog PMID 33752734) and 34 NMR panel codes (all from PMID 33413638's 57 trait strings, listed here verbatim from the EWAS mirror).",
+ "_comment": "Display groups for the By outcome view, added 2026-11-08 from the HG002 render (945 cards, 715 of them one-finding 'Gene expression of Affymetrix ID' cards). A group gathers findings into one card for navigation only: it is not a claim that the readouts are one trait, and it never absorbs a polygenic score or an action (those stay on their own trait key). A finding joins a group only when it cites one of the group's PMIDs AND its trait string is one of `exact` (literal, whitespace-trimmed) or starts with one of `prefixes`. Each finding keeps its own trait string in its details. Astra review 2026-11-08 asked for association wording, PMID scope and curated (not case-folded) equivalence.",
  "gene_expression_affymetrix": {
-  "label": "Gene expression levels (Affymetrix array)",
+  "label": "Gene expression associations (Affymetrix array)",
+  "pmids": [
+   "33752734"
+  ],
   "prefixes": [
    "Gene expression of Affymetrix ID:"
   ]
  },
- "nmr_metabolite_panel": {
-  "label": "Blood lipid and metabolite panel (NMR measures)",
+ "nmr_metabolites": {
+  "label": "Blood lipids and metabolites (NMR research associations)",
+  "pmids": [
+   "33413638"
+  ],
   "exact": [
    "DHA",
    "DHAtoFA",
@@ -66,6 +72,18 @@
    "XS-VLDL-C_pct",
    "XS-VLDL-TG",
    "XS-VLDL-TG_pct"
+  ]
+ },
+ "liver_fat": {
+  "label": "Liver fat",
+  "pmids": [
+   "30796027",
+   "30936141"
+  ],
+  "exact": [
+   "hepatic fat",
+   "Hepatic fat",
+   "Hepatic Fat"
   ]
  }
 }
