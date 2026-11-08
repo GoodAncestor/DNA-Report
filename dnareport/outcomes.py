@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 _ALIASES_FILE = Path(__file__).parent / "data" / "outcome_aliases.json"
+_GROUPS_FILE = Path(__file__).parent / "data" / "outcome_groups.json"
 _CLINVAR = {"clinvar", "clinvar_mirror", "clinvar_panel_157"}
 
 
@@ -45,6 +46,32 @@ def _aliases():
         for value in [key, *(values or [])]:
             lookup[_normal(value)] = key
     return lookup, labels
+
+
+def _groups() -> list[tuple[str, str, tuple, frozenset]]:
+    """(key, label, casefolded prefixes, casefolded exact strings) per family."""
+    try:
+        rows = json.loads(_GROUPS_FILE.read_text())
+    except (OSError, ValueError, TypeError):
+        rows = {}
+    out = []
+    for key, spec in rows.items():
+        if key.startswith("_") or not isinstance(spec, dict):
+            continue
+        prefixes = tuple(str(p).casefold() for p in spec.get("prefixes") or [])
+        exact = frozenset(str(e).strip().casefold() for e in spec.get("exact") or [])
+        out.append((key, str(spec.get("label") or key), prefixes, exact))
+    return out
+
+
+def _family(*values) -> tuple[str, str] | None:
+    """The curated family a catalogue readout belongs to, or None."""
+    for key, label, prefixes, exact in _groups():
+        for value in values:
+            text = str(value or "").strip().casefold()
+            if text and (text in exact or any(text.startswith(p) for p in prefixes)):
+                return key, label
+    return None
 
 
 def _canonical(*values) -> tuple[str, str]:
@@ -83,6 +110,9 @@ def _trait_identity(finding) -> tuple[str, str]:
     detail = finding.detail or {}
     if finding.source == "marker_reference" and finding.marker == "cg05575921":
         return "smoking", "Smoking"
+    family = _family(detail.get("trait"), detail.get("label"))
+    if family:
+        return family
     key, label = _canonical(
         detail.get("copy_key"),
         detail.get("efo"),
@@ -101,6 +131,12 @@ def _score_identity(score) -> str:
 def build_outcomes(result) -> list[Outcome]:
     """Build ordered condition, age, medicine, and trait groups."""
     grouped: dict[str, Outcome] = {}
+    # Two catalogue entries that a reader sees under the same name ("Hepatic
+    # fat" and "Hepatic Fat", mapped to different EFO terms by two studies)
+    # share one card; the first key seen keeps it. Scores and actions that
+    # name the folded key follow it via `redirect`.
+    by_label: dict[str, str] = {}
+    redirect: dict[str, str] = {}
     for finding in result.findings:
         detail = finding.detail or {}
         if finding.source in _CLINVAR:
@@ -118,6 +154,10 @@ def build_outcomes(result) -> list[Outcome]:
         elif finding.source in {"gwas_catalog", "ewas_catalog", "marker_reference"}:
             canonical, label = _trait_identity(finding)
             key = f"trait:{canonical}"
+            folded = by_label.setdefault(label.strip().casefold(), key)
+            if folded != key:
+                redirect[key] = folded
+                key = folded
             outcome = grouped.setdefault(key, Outcome(key, label, "trait"))
             outcome.findings.append(finding)
             if finding.source == "marker_reference":
@@ -142,14 +182,16 @@ def build_outcomes(result) -> list[Outcome]:
 
     for score in result.trait_scores:
         key = f"trait:{_score_identity(score)}"
+        key = redirect.get(key, key)
         if key in grouped:
             grouped[key].score = score
         else:
             grouped[key] = Outcome(key, score.trait, "trait", score=score)
 
     for action in result.actions:
-        if action.outcome_key and action.outcome_key in grouped:
-            grouped[action.outcome_key].actions.append(action)
+        key = redirect.get(action.outcome_key, action.outcome_key)
+        if key and key in grouped:
+            grouped[key].actions.append(action)
 
     def sort_key(outcome):
         if outcome.kind == "condition":
