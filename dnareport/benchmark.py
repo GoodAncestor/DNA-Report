@@ -291,16 +291,38 @@ def read_summary(path):
     """Keep truth/query TP denominators distinct, as specified by hap.py."""
     rows = []
     count_fields = ("TRUTH.TOTAL", "TRUTH.TP", "TRUTH.FN", "QUERY.TOTAL", "QUERY.TP", "QUERY.FP", "QUERY.UNK", "FP.gt")
+    # Real hap.py (0.3.15) summary.csv has no QUERY.TP column; it is only in extended.csv,
+    # on the all-subtype/all-subset/all-genotype row. Take it from there, never by subtraction.
+    query_tp = {}
+    with Path(path).open() as handle:
+        has_query_tp = "QUERY.TP" in (csv.DictReader(handle).fieldnames or [])
+    if not has_query_tp:
+        extended = Path(str(path).removesuffix(".summary.csv") + ".extended.csv")
+        if not extended.is_file():
+            raise ValueError("hap.py summary lacks QUERY.TP and no extended.csv to read it from")
+        with extended.open() as handle:
+            for source in csv.DictReader(handle):
+                if (source.get("Filter") == "ALL" and source.get("Type") in {"SNP", "INDEL"}
+                        and all(source.get(k) == "*" for k in ("Subtype", "Subset", "Genotype", "QQ"))):
+                    if source["Type"] in query_tp:
+                        raise ValueError("Duplicate extended.csv summary row")
+                    query_tp[source["Type"]] = source["QUERY.TP"]
     with Path(path).open() as handle:
         for source in csv.DictReader(handle):
             if source["Filter"] != "ALL" or source["Type"] not in {"SNP", "INDEL"}:
                 continue
+            if not has_query_tp:
+                if source["Type"] not in query_tp:
+                    raise ValueError("extended.csv lacks the all-subtype row for " + source["Type"])
+                source = dict(source, **{"QUERY.TP": query_tp[source["Type"]]})
             row = {"Type": source["Type"], "Filter": "ALL"}
             for name in count_fields:
                 value = float(source[name])
                 if not math.isfinite(value) or value < 0 or not value.is_integer():
                     raise ValueError("Invalid hap.py count")
                 row[name] = int(value)
+            if row["QUERY.TOTAL"] != row["QUERY.TP"] + row["QUERY.FP"] + row["QUERY.UNK"]:
+                raise ValueError("hap.py query counts do not reconcile (TOTAL != TP + FP + UNK)")
             td = row["TRUTH.TP"] + row["TRUTH.FN"]
             qd = row["QUERY.TP"] + row["QUERY.FP"]
             recall = row["TRUTH.TP"]/td if td else None

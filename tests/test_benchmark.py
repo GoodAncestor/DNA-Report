@@ -211,3 +211,24 @@ def test_plan_requires_explicit_supported_comparison_settings(tmp_path, field, v
     plan=json.loads(path.read_text());plan[field]=value;b.dump(path,plan)
     with pytest.raises(ValueError,match='Prespecify'):
         b.validate_plan(path)
+
+
+def test_read_summary_uses_real_happy_layout(tmp_path):
+    """hap.py 0.3.15 writes QUERY.TP only in extended.csv; numbers here are fictional."""
+    summary = tmp_path/"raw.summary.csv"
+    summary.write_text("Type,Filter,TRUTH.TOTAL,TRUTH.TP,TRUTH.FN,QUERY.TOTAL,QUERY.FP,QUERY.UNK,FP.gt,FP.al,METRIC.Recall,METRIC.Precision\n"
+                       "INDEL,ALL,10,6,4,12,2,1,1,1,0.6,0.818182\nINDEL,PASS,10,6,4,12,2,1,1,1,0.6,0.818182\n"
+                       "SNP,ALL,20,18,2,25,1,4,0,1,0.9,0.95\nSNP,PASS,20,18,2,25,1,4,0,1,0.9,0.95\n")
+    head = "Type,Subtype,Subset,Filter,Genotype,QQ.Field,QQ,QUERY.TP\n"
+    extended = tmp_path/"raw.extended.csv"
+    extended.write_text(head + "INDEL,*,*,ALL,*,QUAL,*,9\nINDEL,*,*,PASS,*,QUAL,*,9\nINDEL,D1_5,*,ALL,*,QUAL,*,3\n"
+                        "SNP,*,*,ALL,*,QUAL,*,20\nSNP,ti,*,ALL,*,QUAL,*,12\n")
+    rows = {r["Type"]: r for r in b.read_summary(summary)}
+    assert rows["SNP"]["QUERY.TP"] == 20 and rows["SNP"]["precision"] == 20/21
+    assert rows["INDEL"]["QUERY.TP"] == 9 and rows["INDEL"]["recall"] == .6
+    extended.write_text(head + "INDEL,*,*,ALL,*,QUAL,*,8\nSNP,*,*,ALL,*,QUAL,*,20\n")
+    with pytest.raises(ValueError, match="reconcile"):
+        b.read_summary(summary)
+    extended.unlink()
+    with pytest.raises(ValueError, match="no extended.csv"):
+        b.read_summary(summary)
