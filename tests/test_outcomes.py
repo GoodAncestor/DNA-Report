@@ -199,10 +199,13 @@ def test_same_label_with_different_efo_keys_stays_separate_without_curation():
 def test_a_group_never_absorbs_a_score_or_an_action():
     finding = _cited("cg1", {"trait": "FAw3", "efo": "EFO_0010119"}, "33413638")
     score = SimpleNamespace(efo="EFO_0010119", trait="FAw3")
-    outcomes = _trait_outcomes([finding], trait_scores=[score])
+    action = SimpleNamespace(outcome_key="trait:efo-0010119", text="An action.")
+    outcomes = _trait_outcomes([finding], trait_scores=[score], actions=[action])
     by_key = {o.key: o for o in outcomes}
     assert by_key["trait:nmr_metabolites"].score is None
+    assert by_key["trait:nmr_metabolites"].actions == []
     assert by_key["trait:efo-0010119"].score is score
+    assert by_key["trait:efo-0010119"].actions == [action]
 
 
 def test_malformed_group_specs_are_ignored(tmp_path, monkeypatch):
