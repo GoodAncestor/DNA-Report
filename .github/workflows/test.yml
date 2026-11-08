@@ -51,5 +51,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[web,test]"
 
+      # The app and both engines must pin one bio-core commit (shared copy rules).
+      - name: bio-core pins agree
+        run: python scripts/check_pins.py --main
+
       - name: Run tests
         run: pytest -q
